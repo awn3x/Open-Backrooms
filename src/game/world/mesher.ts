@@ -57,6 +57,20 @@ export class GeoBuilder {
     const e = this.v(p[3][0], p[3][1], p[3][2], n[0], n[1], n[2], uv[3][0], uv[3][1], c, m);
     this.idx.push(a, b, d, a, d, e);
   }
+  /**
+   * Horizontal square split into an n×n grid. A chunk-sized single quad (~39 m) loses depth
+   * precision when clipped at grazing angles, which let the plenum show through the ceiling.
+   */
+  plane(x0: number, z0: number, size: number, y: number, up: boolean, uv: (x: number, z: number) => number[], n = 16) {
+    const d = size / n;
+    for (let j = 0; j < n; j++)
+      for (let i = 0; i < n; i++) {
+        const a = x0 + i * d;
+        const b = z0 + j * d;
+        const P = up ? [[a, b + d], [a + d, b + d], [a + d, b], [a, b]] : [[a, b], [a + d, b], [a + d, b + d], [a, b + d]];
+        this.quad(P.map(([x, z]) => [x, y, z]), [0, up ? 1 : -1, 0], P.map(([x, z]) => uv(x, z)));
+      }
+  }
   /** axis-aligned box, world-space UVs scaled by 1/s; faces masked by `faces` (+x,-x,+y,-y,+z,-z) */
   box(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, s: number, faces = 0b111111, c?: number[], m?: number[]) {
     const U = (a: number) => a / s;
@@ -214,14 +228,14 @@ export function buildChunk(L: ChunkLayout, protos: Protos): ChunkMeshes {
   // ---------------------------------------------------------------- floor / ceiling
   const floor = new GeoBuilder();
   const fs = def.tex.floorScale;
-  floor.quad([[X0, 0, Z0 + S], [X0 + S, 0, Z0 + S], [X0 + S, 0, Z0], [X0, 0, Z0]], [0, 1, 0], [[X0 / fs, -(Z0 + S) / fs], [(X0 + S) / fs, -(Z0 + S) / fs], [(X0 + S) / fs, -Z0 / fs], [X0 / fs, -Z0 / fs]]);
+  floor.plane(X0, Z0, S, 0, true, (x, z) => [x / fs, -z / fs]);
   const ceil = new GeoBuilder();
   const cs = def.tile > 0 ? def.tile : ws;
-  ceil.quad([[X0, H, Z0], [X0 + S, H, Z0], [X0 + S, H, Z0 + S], [X0, H, Z0 + S]], [0, -1, 0], [[X0 / cs, Z0 / cs], [(X0 + S) / cs, Z0 / cs], [(X0 + S) / cs, (Z0 + S) / cs], [X0 / cs, (Z0 + S) / cs]]);
+  ceil.plane(X0, Z0, S, H, false, (x, z) => [x / cs, z / cs]);
   let plenum: GeoData | null = null;
   if (def.tile > 0) {
     const pb = new GeoBuilder();
-    pb.quad([[X0, H + 0.45, Z0], [X0 + S, H + 0.45, Z0], [X0 + S, H + 0.45, Z0 + S], [X0, H + 0.45, Z0 + S]], [0, -1, 0], [[0, 0], [1, 0], [1, 1], [0, 1]]);
+    pb.plane(X0, Z0, S, H + 0.45, false, (x, z) => [(x - X0) / S, (z - Z0) / S]);
     plenum = pb.build();
   }
 
