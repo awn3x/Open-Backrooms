@@ -115,6 +115,7 @@ def outlet_duplex():
     p = plate(m)
     parts = [p, duplex_face(m, 0.0195, m["ivory"]), duplex_face(m, -0.0195, m["ivory"]), screw(m, 0, m["ivory"])]
     ob = join(parts, "Outlet")
+    decimate(ob, 0.45)
     shade_smooth(ob, 30)
     export("outlet_duplex")
     preview("outlet_duplex", (0, 0, 0), 0.22, 10, -25)
@@ -127,6 +128,7 @@ def outlet_twoprong():
     parts = [p, duplex_face(m, 0.0195, m["bakelite"], ground=False, round_face=True),
              duplex_face(m, -0.0195, m["bakelite"], ground=False, round_face=True), screw(m, 0, m["brass"])]
     ob = join(parts, "Outlet")
+    decimate(ob, 0.45)
     shade_smooth(ob, 30)
     export("outlet_twoprong")
     preview("outlet_twoprong", (0, 0, 0), 0.22, 10, -25)
@@ -150,6 +152,7 @@ def outlet_gfci():
     led = sphere("led", 0.0012, (0.012, -0.008, 0.0), m["led"], segs=8, rings=6)
     screws = [screw(m, 0.049, m["white"]), screw(m, -0.049, m["white"])]
     ob = join([p, body, test, reset_b, led] + screws, "Outlet")
+    decimate(ob, 0.45)
     shade_smooth(ob, 30)
     export("outlet_gfci")
     preview("outlet_gfci", (0, 0, 0), 0.22, 10, -25)
@@ -164,6 +167,7 @@ def switch_plate():
     lever = box("lever", (0.0075, 0.016, 0.009), (0, -0.009, 0.003), m["ivory"], bevel=0.0012)
     lever.rotation_euler = (math.radians(-18), 0, 0)
     ob = join([p, body, lever, screw(m, 0.030, m["ivory"]), screw(m, -0.030, m["ivory"])], "Switch")
+    decimate(ob, 0.5)
     shade_smooth(ob, 30)
     export("switch_plate")
     preview("switch_plate", (0, 0, 0), 0.22, 10, -25)
@@ -215,6 +219,7 @@ def outlet_broken():
         wires.append(wire(f"w{i}", pts, 0.0014 if i < 2 else 0.0009, col))
     parts = [hole, pl, dev, ear_t] + wires
     ob = join(parts, "OutletBroken")
+    decimate(ob, 0.4)
     shade_smooth(ob, 35)
     export("outlet_broken")
     preview("outlet_broken", (0, -0.02, -0.04), 0.35, 15, -40)
@@ -603,6 +608,7 @@ def crate():
             parts.append(box("post", (0.07, 0.07, H), (sx * (W / 2 - 0.02), sy * (D / 2 - 0.02), H / 2 + 0.01), tones[0], bevel=0.004))
     parts.append(box("inner", (W - 0.04, D - 0.04, H - 0.1), (0, 0, H / 2 + 0.03), mat("Dark", (0.02, 0.02, 0.02), 0.9)))
     ob = join(parts, "Crate")
+    decimate(ob, 0.5)
     export("crate")
     preview("crate", (0, 0, 0.4), 3.0, 20, -35)
 
@@ -640,7 +646,8 @@ def lamp_highbay():
     rod = cyl("rod", 0.012, 0.6, (0, 0, 0.3), (0, 0, 0), mat("Steel", (0.6, 0.6, 0.6), 0.4, 1.0), 12)
     box_ = cyl("ballast", 0.08, 0.1, (0, 0, 0.05), (0, 0, 0), alu, 24)
     bulb = sphere("bulb", 0.06, (0, 0, -0.15), mat("Bulb_Sodium", (1, 0.8, 0.5), 0.2, emit=(1.0, 0.62, 0.28), emit_strength=6.0), (1, 1, 1.4), 16, 10)
-    join([bell, rod, box_, bulb], "HighBay")
+    hb = join([bell, rod, box_, bulb], "HighBay")
+    decimate(hb, 0.35)
     export("lamp_highbay")
     preview("lamp_highbay", (0, 0, -0.1), 1.3, -10, -30)
 
@@ -658,7 +665,8 @@ def lamp_caged():
         a = k / 6 * 2 * math.pi
         w = wire("bar", [(0.07 * math.cos(a), 0.07 * math.sin(a), -0.04), (0.078 * math.cos(a), 0.078 * math.sin(a), -0.12), (0.05 * math.cos(a), 0.05 * math.sin(a), -0.2), (0, 0, -0.215)], 0.003, steel)
         parts.append(w)
-    join(parts, "CagedLamp")
+    cl = join(parts, "CagedLamp")
+    decimate(cl, 0.2)
     export("lamp_caged")
     preview("lamp_caged", (0, 0, -0.1), 0.7, 10, -30)
 
@@ -733,3 +741,107 @@ def pipe_bracket():
 ALL = [outlet_duplex, outlet_twoprong, outlet_gfci, outlet_broken, switch_plate, floor_box, troffer, troffer_hanging,
        vent_ceiling, vent_wall, almond_water, exit_door, hatch, elevator, office_chair, wet_floor_sign, crate, pallet,
        lamp_highbay, lamp_caged, pipe_valve, pipe_gauge, pipe_bracket]
+
+
+# ------------------------------------------------------------------ hub base
+def lockers():
+    """Row of 5 steel lockers, 0.38 wide each. Origin: floor, back against the wall, facing -Y."""
+    reset()
+    m = M()
+    body_m = mat("LockerPaint", (0.24, 0.3, 0.36), 0.45, 0.4)
+    dark = m["dark"]
+    parts = []
+    W, H, D = 0.38, 1.85, 0.45
+    for k in range(5):
+        x = (k - 2) * W
+        parts.append(box("body", (W - 0.004, D, H), (x, -D / 2, H / 2 + 0.08), body_m, bevel=0.004))
+        door = box("door", (W - 0.03, 0.012, H - 0.06), (x, -D - 0.004, H / 2 + 0.08), body_m, bevel=0.003)
+        vents = [box("vent", (W - 0.12, 0.02, 0.008), (x, -D - 0.008, H - 0.12 - v * 0.03), dark) for v in range(5)]
+        cut_many(door, vents)
+        parts.append(door)
+        parts.append(box("handle", (0.02, 0.03, 0.12), (x + W / 2 - 0.05, -D - 0.02, 1.0), m["steel"], bevel=0.004))
+        parts.append(box("label", (0.08, 0.004, 0.03), (x, -D - 0.012, 1.55), mat("LockerLabel", (0.85, 0.83, 0.75), 0.6)))
+    parts.append(box("base", (5 * W, D, 0.08), (0, -D / 2, 0.04), dark))
+    join(parts, "Lockers")
+    export("lockers")
+    preview("lockers", (0, -0.3, 1.0), 3.6, 10, -25)
+
+
+def kiosk():
+    """Supply kiosk / vending terminal with a glowing screen. Origin floor centre, facing -Y."""
+    reset()
+    m = M()
+    body = mat("KioskBody", (0.62, 0.6, 0.55), 0.5, 0.3)
+    parts = [box("cab", (0.9, 0.7, 1.9), (0, 0, 0.95), body, bevel=0.02)]
+    glass = box("window", (0.62, 0.02, 1.0), (-0.08, -0.355, 1.2), mat("KioskGlass", (0.05, 0.07, 0.08), 0.05, 0.2), bevel=0.004)
+    parts.append(glass)
+    for r in range(4):
+        parts.append(box("shelf", (0.6, 0.3, 0.01), (-0.08, -0.2, 0.78 + r * 0.24), m["steel"]))
+        for c in range(4):
+            parts.append(cyl("can", 0.03, 0.12, (-0.3 + c * 0.14, -0.25, 0.85 + r * 0.24), (0, 0, 0), mat(f"Item{(r + c) % 3}", [(0.8, 0.7, 0.4), (0.6, 0.2, 0.15), (0.3, 0.5, 0.6)][(r + c) % 3], 0.4), 12))
+    parts.append(box("screen", (0.16, 0.02, 0.1), (0.33, -0.36, 1.35), mat("Glow_Kiosk", (0.2, 1, 0.5), 0.3, emit=(0.25, 1.0, 0.55), emit_strength=3.0)))
+    parts.append(box("keypad", (0.14, 0.02, 0.18), (0.33, -0.36, 1.12), m["steel"], bevel=0.004))
+    parts.append(box("slot", (0.5, 0.05, 0.12), (-0.08, -0.34, 0.35), m["dark"]))
+    parts.append(box("sign", (0.86, 0.02, 0.2), (0, -0.36, 1.8), mat("Glow_KioskSign", (1, 0.8, 0.3), 0.3, emit=(1.0, 0.72, 0.25), emit_strength=2.5)))
+    join(parts, "Kiosk")
+    export("kiosk")
+    preview("kiosk", (0, 0, 1.0), 3.2, 8, -30)
+
+
+def bulletin_board():
+    """Cork board 1.6 x 1.0, wall mounted: origin at its back centre, facing -Y."""
+    reset()
+    wood = mat("BoardFrame", (0.35, 0.22, 0.12), 0.6)
+    cork = mat("Cork", (0.62, 0.45, 0.28), 0.95)
+    parts = [box("cork", (1.5, 0.02, 0.9), (0, -0.012, 0), cork)]
+    for sx, sz, lx, lz in ((1.6, 0.05, 0, 0.475), (1.6, 0.05, 0, -0.475), (0.05, 1.0, 0.775, 0), (0.05, 1.0, -0.775, 0)):
+        parts.append(box("frame", (sx, 0.035, sz), (lx, -0.018, lz), wood, bevel=0.006))
+    join(parts, "Board")
+    export("bulletin_board")
+    preview("bulletin_board", (0, 0, 0), 2.4, 5, -15)
+
+
+def couch():
+    reset()
+    fabric = mat("CouchFabric", (0.33, 0.26, 0.2), 0.95)
+    parts = [
+        box("seat", (1.8, 0.8, 0.22), (0, 0, 0.3), fabric, bevel=0.05, segs=3),
+        box("back", (1.8, 0.22, 0.6), (0, 0.3, 0.6), fabric, bevel=0.06, segs=3),
+        box("armL", (0.2, 0.8, 0.55), (-0.9, 0, 0.45), fabric, bevel=0.06, segs=3),
+        box("armR", (0.2, 0.8, 0.55), (0.9, 0, 0.45), fabric, bevel=0.06, segs=3),
+    ]
+    for k in range(3):
+        parts.append(box("cushion", (0.56, 0.7, 0.12), (-0.58 + k * 0.58, -0.02, 0.46), fabric, bevel=0.05, segs=3))
+    for sx in (-0.85, 0.85):
+        for sy in (-0.3, 0.3):
+            parts.append(cyl("foot", 0.025, 0.2, (sx, sy, 0.1), (0, 0, 0), mat("Dark", (0.02, 0.02, 0.02), 0.8), 8))
+    ob = join(parts, "Couch")
+    shade_smooth(ob, 40)
+    export("couch")
+    preview("couch", (0, 0, 0.4), 3.0, 15, -30)
+
+
+def safe_sign():
+    reset()
+    tex = TMP / "safe_sign.png"
+    img = Image.new("RGB", (1024, 256), (8, 30, 14))
+    d = ImageDraw.Draw(img)
+    f = font(FONT_C, 150)
+    w = d.textlength("SAFE ZONE", font=f)
+    d.text(((1024 - w) / 2, 40), "SAFE ZONE", fill=(90, 255, 140), font=f)
+    tex.parent.mkdir(parents=True, exist_ok=True)
+    img.save(tex)
+    housing = box("housing", (1.3, 0.06, 0.34), (0, -0.03, 0), mat("SignHousing", (0.1, 0.1, 0.1), 0.5), bevel=0.01)
+    bm = bmesh.new()
+    uvl = bm.loops.layers.uv.new("UVMap")
+    vs = [bm.verts.new(p) for p in ((-0.62, -0.0605, -0.15), (0.62, -0.0605, -0.15), (0.62, -0.0605, 0.15), (-0.62, -0.0605, 0.15))]
+    fc = bm.faces.new(vs)
+    for lp, uv in zip(fc.loops, ((0, 0), (1, 0), (1, 1), (0, 1))):
+        lp[uvl].uv = uv
+    face = new_obj("face", bm, image_mat("Glow_Safe", tex, 0.3, emissive=True))
+    join([housing, face], "SafeSign")
+    export("safe_sign")
+    preview("safe_sign", (0, 0, 0), 2.0, 0, 0)
+
+
+ALL += [lockers, kiosk, bulletin_board, couch, safe_sign]

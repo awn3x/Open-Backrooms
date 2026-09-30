@@ -205,6 +205,13 @@ def apply_transforms(ob):
     bpy.ops.object.transform_apply(location=True, rotation=True, scale=True)
 
 
+def decimate(ob, ratio):
+    md = ob.modifiers.new("dec", "DECIMATE")
+    md.ratio = ratio
+    md.use_collapse_triangulate = True
+    apply_modifiers(ob)
+
+
 def export(name, objects=None, animations=False):
     MODELS.mkdir(parents=True, exist_ok=True)
     for o in bpy.context.scene.objects:
