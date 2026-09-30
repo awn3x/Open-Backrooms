@@ -1,0 +1,30 @@
+{
+  "name": "open-backrooms",
+  "private": true,
+  "version": "1.0.0",
+  "description": "A free, open-source, hyper-realistic Backrooms experience in the browser with P2P multiplayer.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 4173",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@fontsource/inter": "^5.3.0",
+    "@fontsource/vt323": "^5.3.0",
+    "@trystero-p2p/torrent": "^0.25.4",
+    "postprocessing": "^6.39.5",
+    "three": "^0.186.1",
+    "trystero": "^0.25.4"
+  },
+  "devDependencies": {
+    "@types/three": "^0.186.0",
+    "playwright-core": "^1.63.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1",
+    "vitest": "^5.0.2"
+  }
+}
