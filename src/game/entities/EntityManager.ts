@@ -33,7 +33,6 @@ export interface EntitySnap {
 }
 
 const KIND_MODEL: Record<EntityKind, string> = { crawler: 'crawler', dweller: 'dweller', watcher: 'watcher', smiler: 'smiler', mimic: 'avatar' };
-const KIND_COLOR: Record<EntityKind, number> = { crawler: 0xa39b91, dweller: 0x4a3328, watcher: 0x0b0b0c, smiler: 0x000000, mimic: 0xffffff };
 /** Lead-in (s) before the hit in every sting_* sound; must match STING_PRE in tools/audio/build_audio.py. */
 const STING_PRE = 0.5;
 
@@ -137,8 +136,6 @@ export class EntityManager {
         const pm = mats.map((mm) => {
           const s = (mm as THREE.MeshStandardMaterial).clone();
           if (m.geometry.getAttribute('color')) s.vertexColors = true;
-          if (/_Skin$/.test(s.name) && kind !== 'mimic') s.color.set(KIND_COLOR[kind]);
-          if (kind === 'watcher' && /_Skin$/.test(s.name)) s.roughness = 0.25;
           if (s.name.startsWith('Glow')) {
             s.emissiveIntensity = 6;
             s.toneMapped = false;

@@ -26,6 +26,7 @@ from mathutils import Matrix, Quaternion, Vector
 
 sys.path.insert(0, str(Path(__file__).parent))
 from common import MODELS, PREVIEW, apply_modifiers, export, link, mat, reset  # noqa: E402
+import bake as BK  # noqa: E402
 
 MH = Path(os.environ.get("MH_DATA", "/home/user/makehumancommunity/makehuman/makehuman/data"))
 
@@ -37,18 +38,27 @@ def load_obj():
     global _OBJ
     if _OBJ:
         return _OBJ
-    verts, faces, groups = [], [], []
+    verts, faces, groups, uvs, fuv = [], [], [], [], []
     g = None
     for line in open(MH / "3dobjs/base.obj"):
         if line.startswith("v "):
             verts.append([float(x) for x in line.split()[1:4]])
+        elif line.startswith("vt "):
+            uvs.append([float(x) for x in line.split()[1:3]])
         elif line.startswith("g "):
             g = line.split()[1]
         elif line.startswith("f "):
-            faces.append([int(t.split("/")[0]) - 1 for t in line.split()[1:]])
+            tok = line.split()[1:]
+            faces.append([int(t.split("/")[0]) - 1 for t in tok])
+            fuv.append([int(t.split("/")[1]) - 1 if "/" in t and t.split("/")[1] else -1 for t in tok])
             groups.append(g)
+    global _UV
+    _UV = (np.array(uvs), fuv)
     _OBJ = (np.array(verts), faces, groups)
     return _OBJ
+
+
+_UV = None
 
 
 def load_target(name):
@@ -147,11 +157,22 @@ def build_character(name, targets, include=("body",), stretch=None, skin=(0.72, 
     bm = bmesh.new()
     bverts = [bm.verts.new(to_blender(v[o])) for o in used]
     mat_idx = {"body": 0, "helper-l-eye": 1, "helper-r-eye": 1, "helper-upper-teeth": 2, "helper-lower-teeth": 2, "helper-tongue": 3}
+    uvl = bm.loops.layers.uv.new("UVMap")
+    uvs, fuv = _UV
+    face_uv = {id(f): fu for f, fu in zip(faces, fuv)}
     for f, g in sel:
         try:
             bf = bm.faces.new([bverts[remap[i]] for i in f])
             bf.material_index = mat_idx.get(g, 0)
             bf.smooth = True
+            fu = face_uv[id(f)]
+            # helpers (eyes / teeth) share UV space with the body in MakeHuman's default layout:
+            # squeeze them into a spare corner so baking never overwrites skin
+            for lp, ui in zip(bf.loops, fu):
+                u, w = uvs[ui] if ui >= 0 else (0.0, 0.0)
+                if g != "body":
+                    u, w = 0.955 + u * 0.04, 0.955 + w * 0.04
+                lp[uvl].uv = (u, w)
         except ValueError:
             pass
     bm.to_mesh(me)
@@ -228,7 +249,7 @@ def region_of(bone):
     return "skin"
 
 
-def dress_up(body, arm, outfit_color=(0.3, 0.33, 0.27)):
+def dress_up(body, arm, outfit_color=(0.3, 0.33, 0.27), specs=None):
     """Cut clothing shells from the body by dominant bone and offset them outward."""
     me = body.data
     groups = {g.index: g.name for g in body.vertex_groups}
@@ -236,7 +257,7 @@ def dress_up(body, arm, outfit_color=(0.3, 0.33, 0.27)):
     for vtx in me.vertices:
         best = max(vtx.groups, key=lambda g: g.weight, default=None)
         region.append(region_of(groups[best.group]) if best else "skin")
-    specs = {
+    specs = specs or {
         "top": ("Hoodie", outfit_color, 0.92, 0.014),
         "legs": ("Denim", (0.13, 0.17, 0.26), 0.85, 0.008),
         "shoes": ("Shoe", (0.09, 0.09, 0.1), 0.6, 0.009),
@@ -323,6 +344,12 @@ def hair_cap(body, color=(0.07, 0.05, 0.04)):
     hm = bpy.data.meshes.new("Hair")
     bm.to_mesh(hm)
     bm.free()
+    sb = bmesh.new()
+    sb.from_mesh(me)
+    sb.faces.ensure_lookup_table()
+    bmesh.ops.delete(sb, geom=[sb.faces[i] for i in faces], context="FACES")
+    sb.to_mesh(me)
+    sb.free()
     hob = bpy.data.objects.new("Hair", hm)
     link(hob)
     for g in body.vertex_groups:
@@ -604,43 +631,139 @@ def finish(name, body_parts, arm, export_name, previews):
     export(export_name, [arm], animations=True)
 
 
+
+# ------------------------------------------------------------------ surfacing helpers
+def eye_centres(v):
+    """Rest-pose eye positions (Blender space) from MakeHuman's eye helper groups."""
+    verts, faces, groups = load_obj()
+    out = []
+    for side in ("helper-l-eye", "helper-r-eye"):
+        idx = sorted({i for f, g in zip(faces, groups) if g == side for i in f})
+        out.append(to_blender(v[idx].mean(0)))
+    return out
+
+
+def smooth_face(body, iterations=30):
+    """Erase the face: relax the front of the head until nose, lips and brows melt into a blank mask."""
+    me = body.data
+    zs = [vt.co.z for vt in me.vertices]
+    top = max(zs)
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    ys = [vt.co.y for vt in bm.verts if vt.co.z > top - 0.3]
+    front = min(ys)
+    # only the face plate (front 6 cm of the head, between chin and brow); keep the skull's volume
+    head = [vt for vt in bm.verts if top - 0.34 < vt.co.z < top - 0.08 and vt.co.y < front + 0.05 and abs(vt.co.x) < 0.075]
+    for _ in range(iterations):
+        bmesh.ops.smooth_vert(bm, verts=head, factor=0.5, use_axis_x=True, use_axis_y=True, use_axis_z=True)
+    bm.to_mesh(me)
+    bm.free()
+    me.update()
+
+
+def surface(parts, name, res=1024):
+    BK.bake(parts, name, res=res)
+
 # ------------------------------------------------------------------ characters
 RACE_MALE = [("macrodetails/caucasian-male-young.target", 0.5), ("macrodetails/african-male-young.target", 0.25), ("macrodetails/asian-male-young.target", 0.25)]
+
+
+def backpack(arm):
+    """A proper day pack: rounded body, front pocket, top handle and two shoulder straps."""
+    sp = arm.data.bones["spine02"].head_local
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+    bmesh.ops.scale(bm, vec=(0.29, 0.13, 0.4), verts=bm.verts)
+    bmesh.ops.bevel(bm, geom=bm.edges[:], offset=0.05, segments=4, affect="EDGES")
+    pocket = bmesh.new()
+    bmesh.ops.create_cube(pocket, size=1.0)
+    bmesh.ops.scale(pocket, vec=(0.22, 0.06, 0.17), verts=pocket.verts)
+    bmesh.ops.bevel(pocket, geom=pocket.edges[:], offset=0.025, segments=3, affect="EDGES")
+    bmesh.ops.translate(pocket, vec=(0, 0.075, -0.09), verts=pocket.verts)
+    me = bpy.data.meshes.new("Backpack")
+    pocket.to_mesh(me)
+    pocket.free()
+    bm.from_mesh(me)
+    for sx in (-0.08, 0.08):  # shoulder straps: thin bands over the shoulders to the hips
+        st = bmesh.new()
+        bmesh.ops.create_cube(st, size=1.0)
+        bmesh.ops.scale(st, vec=(0.05, 0.015, 0.44), verts=st.verts)
+        bmesh.ops.translate(st, vec=(sx, -0.1, 0.02), verts=st.verts)
+        st.to_mesh(me)
+        st.free()
+        bm.from_mesh(me)
+    bmesh.ops.translate(bm, vec=sp + Vector((0, 0.19, 0.03)), verts=bm.verts)
+    bm.to_mesh(me)
+    bm.free()
+    ob = bpy.data.objects.new("Backpack", me)
+    link(ob)
+    for p in me.polygons:
+        p.use_smooth = True
+    # box-project UVs into the spare top-right region of the atlas
+    me.uv_layers.new(name="UVMap")
+    uvl = me.uv_layers[0].data
+    for p in me.polygons:
+        for li in p.loop_indices:
+            co = me.vertices[me.loops[li].vertex_index].co - sp
+            n = p.normal
+            a, b = (co.y, co.z) if abs(n.x) > max(abs(n.y), abs(n.z)) else (co.x, co.z) if abs(n.y) > abs(n.z) else (co.x, co.y)
+            uvl[li].uv = (0.83 + (a + 0.3) * 0.13, 0.855 + (b + 0.3) * 0.13)
+    m = bpy.data.materials.new("Backpack")
+    BK.nylon(m, (0.2, 0.07, 0.05))
+    me.materials.append(m)
+    rigid_piece(ob, "spine02")
+    return ob
+
+
+def collar(arm, material, r=0.068, thick=0.02, drop=0.0, back=0.012):
+    """A soft ring round the neck that hides the cut edge of a garment."""
+    n = arm.data.bones["neck01"].head_local
+    bm = bmesh.new()
+    bmesh.ops.create_circle(bm, cap_ends=False, radius=1.0, segments=24)
+    geom = bmesh.ops.extrude_edge_only(bm, edges=bm.edges[:])["geom"]
+    bmesh.ops.translate(bm, vec=(0, 0, 1.0), verts=[g for g in geom if isinstance(g, bmesh.types.BMVert)])
+    for vt in bm.verts:
+        up = vt.co.z
+        vt.co.x *= r + thick * (1 - up)
+        vt.co.y *= (r + thick * (1 - up)) * 1.1
+        vt.co.z = up * 0.035
+    bmesh.ops.translate(bm, vec=n + Vector((0, back, -0.03 - drop)), verts=bm.verts)
+    me = bpy.data.meshes.new("Collar")
+    bm.to_mesh(me)
+    bm.free()
+    ob = bpy.data.objects.new("Collar", me)
+    link(ob)
+    me.uv_layers.new(name="UVMap")
+    for p in me.polygons:
+        for li in p.loop_indices:
+            co = me.vertices[me.loops[li].vertex_index].co
+            me.uv_layers[0].data[li].uv = (0.84 + (math.atan2(co.y - n.y, co.x - n.x) / 6.2832 + 0.5) * 0.1, 0.965 + (co.z - n.z + 0.05) * 0.3)
+    sol = ob.modifiers.new("sol", "SOLIDIFY")
+    sol.thickness = 0.006
+    apply_modifiers(ob)
+    for p in ob.data.polygons:
+        p.use_smooth = True
+    ob.data.materials.append(bpy.data.materials[material])
+    rigid_piece(ob, "neck01")
+    return ob
 
 
 def avatar():
     body, arm, v, vw, used = build_character("Avatar", RACE_MALE, skin=(0.72, 0.53, 0.43))
     pieces = dress_up(body, arm)
-    hair = hair_cap(body)
-    # hood bunched around the neck and a backpack, rigid on the upper spine
-    neck = arm.data.bones["neck01"].head_local
-    hood = bpy.data.objects.new("Hood", bpy.data.meshes.new("Hood"))
-    link(hood)
-    bm = bmesh.new()
-    bmesh.ops.create_uvsphere(bm, u_segments=20, v_segments=10, radius=1.0)
-    bmesh.ops.scale(bm, vec=(0.13, 0.12, 0.07), verts=bm.verts)
-    bmesh.ops.translate(bm, vec=neck + Vector((0, 0.045, -0.015)), verts=bm.verts)
-    bm.to_mesh(hood.data)
-    bm.free()
-    hood.data.materials.append(bpy.data.materials["Hoodie"])
-    for p in hood.data.polygons:
-        p.use_smooth = True
-    rigid_piece(hood, "spine01")
-    sp = arm.data.bones["spine02"].head_local
-    pack = bpy.data.objects.new("Backpack", bpy.data.meshes.new("Backpack"))
-    link(pack)
-    bm = bmesh.new()
-    bmesh.ops.create_cube(bm, size=1.0)
-    bmesh.ops.scale(bm, vec=(0.3, 0.14, 0.4), verts=bm.verts)
-    bmesh.ops.translate(bm, vec=sp + Vector((0, 0.19, 0.02)), verts=bm.verts)
-    bmesh.ops.bevel(bm, geom=bm.edges[:], offset=0.035, segments=3, affect="EDGES")
-    bm.to_mesh(pack.data)
-    bm.free()
-    pack.data.materials.append(mat("Backpack", (0.2, 0.08, 0.06), 0.8))
-    rigid_piece(pack, "spine02")
-    parts = [body] + pieces + ([hair] if hair else []) + [hood, pack]
+    hair = None
+    top = max(vt.co.z for vt in body.data.vertices)
+    front = min(vt.co.y for vt in body.data.vertices if vt.co.z > top - 0.25)
+    BK.skin(body.data.materials[0], (0.74, 0.55, 0.45), (0.62, 0.4, 0.32), rough=0.5, wet=0.1,
+            redness=(0.78, 0.42, 0.36), dirt=(0.42, 0.3, 0.24), mottle=0.4, scalp=(top, front), hair_col=(0.06, 0.035, 0.022))
+    BK.knit(bpy.data.materials["Hoodie"], (0.62, 0.62, 0.6))  # neutral: the game tints it per outfit
+    BK.denim(bpy.data.materials["Denim"])
+    BK.leather(bpy.data.materials["Shoe"], (0.08, 0.08, 0.09))
+    pack = backpack(arm)
+    parts = [body] + pieces + ([hair] if hair else []) + [pack, collar(arm, "Hoodie", r=0.07, thick=0.03)]
     ob = join_all(parts, "Avatar")
     decimate(ob, 0.5)
+    surface([ob], "avatar", 1024)
     attach(ob, arm)
     humanoid_clips(arm, "Avatar")
     finish("Avatar", [ob], arm, "avatar", [("walk", 27), ("run", 16), ("crouchwalk", 35)])
@@ -670,6 +793,8 @@ def crawler_clips(arm, neck_scale=1.0, jaw=26):
                 P(a, f"finger{n}-2{sd}").scale = (1, 1.5, 1)
         for n in ("neck01", "neck02"):
             P(a, n).scale = (1, neck_scale, 1)
+        # children inherit scale: keep the skull its real size on a stretched neck
+        P(a, "neck03").scale = (1, 1 / (neck_scale * neck_scale), 1)
         rot(P(a, "jaw"), X, jaw)
         rot(root, X, 72)
         for sd, sgn in ((".L", 1), (".R", -1)):
@@ -730,30 +855,54 @@ def crawler_clips(arm, neck_scale=1.0, jaw=26):
 
 
 def crawler():
-    body, arm, v, vw, used = build_character(
-        "Crawler", [("macrodetails/caucasian-male-young.target", 1.0), ("macrodetails/universal-male-young-minmuscle-minweight.target", 1.0)],
-        stretch=emaciated(1.05), skin=(0.6, 0.57, 0.53), eyes=False, teeth=True, rough=0.42)
-    decimate(body, 0.55)
+    targets = [("macrodetails/caucasian-male-young.target", 1.0), ("macrodetails/universal-male-young-minmuscle-minweight.target", 1.0)]
+    body, arm, v, vw, used = build_character("Crawler", targets, stretch=emaciated(1.05), eyes=False, teeth=True)
+    sockets = [(e.x, e.y, e.z, 0.03) for e in eye_centres(v)]
+    # pale, bloodless, mottled skin; ribs and spine push through; hollow black eye sockets
+    BK.skin(body.data.materials[0], (0.42, 0.4, 0.35), (0.36, 0.24, 0.25), vein=(0.16, 0.2, 0.32), rough=0.42, wet=0.35,
+            ribs=(1.04, 1.36, 0.034), sockets=sockets, socket_col=(0.015, 0.01, 0.01), dirt=(0.12, 0.09, 0.06), mottle=1.4)
+    BK.skin(bpy.data.materials["Teeth"], (0.62, 0.55, 0.36), (0.35, 0.28, 0.16), rough=0.3, dirt=(0.2, 0.12, 0.06))
+    decimate(body, 0.6)
+    surface([body], "crawler", 1024)
     attach(body, arm)
-    crawler_clips(arm)
+    crawler_clips(arm, jaw=40)
     finish("Crawler", [body], arm, "crawler", [("crawl", 24), ("lunge", 18)])
 
 
 def dweller():
-    body, arm, v, vw, used = build_character(
-        "Dweller", [("macrodetails/caucasian-male-young.target", 1.0), ("macrodetails/universal-male-young-minmuscle-minweight.target", 1.0)],
-        stretch=emaciated(1.12), skin=(0.24, 0.15, 0.11), eyes=False, teeth=True, rough=0.35)
-    decimate(body, 0.55)
+    targets = [("macrodetails/caucasian-male-young.target", 1.0), ("macrodetails/universal-male-young-minmuscle-minweight.target", 1.0)]
+    body, arm, v, vw, used = build_character("Dweller", targets, stretch=emaciated(1.12), eyes=False, teeth=True)
+    sockets = [(e.x, e.y, e.z, 0.032) for e in eye_centres(v)]
+    # charred, split, oily skin from the boiler tunnels
+    BK.skin(body.data.materials[0], (0.16, 0.1, 0.08), (0.05, 0.035, 0.03), rough=0.5, wet=0.4, ribs=(1.08, 1.42, 0.036),
+            cracks=9, crack_col=(0.45, 0.1, 0.05), sockets=sockets, socket_col=(0.0, 0.0, 0.0), dirt=(0.02, 0.015, 0.01))
+    BK.skin(bpy.data.materials["Teeth"], (0.5, 0.42, 0.26), (0.2, 0.15, 0.08), rough=0.35)
+    decimate(body, 0.6)
+    surface([body], "dweller", 1024)
     attach(body, arm)
-    crawler_clips(arm, neck_scale=2.2, jaw=34)
+    crawler_clips(arm, neck_scale=1.6, jaw=46)
     finish("Dweller", [body], arm, "dweller", [("crawl", 24)])
 
 
 def watcher():
+    """A 'Faceling': a too-tall office worker with no face, in a sweat-stained shirt and slacks."""
     body, arm, v, vw, used = build_character(
-        "Watcher", [("macrodetails/caucasian-male-young.target", 0.6), ("macrodetails/universal-male-young-minmuscle-minweight.target", 1.0)],
-        stretch=emaciated(1.5), skin=(0.035, 0.035, 0.04), eyes=False, rough=0.22)
+        "Watcher", [("macrodetails/caucasian-male-young.target", 0.8), ("macrodetails/universal-male-young-minmuscle-minweight.target", 0.7)],
+        stretch=emaciated(1.26), eyes=False)
+    smooth_face(body)
+    pieces = dress_up(body, arm, specs={
+        "top": ("Shirt", (0.7, 0.68, 0.6), 0.85, 0.008),
+        "legs": ("Slacks", (0.1, 0.1, 0.11), 0.8, 0.008),
+        "shoes": ("Shoe", (0.05, 0.04, 0.035), 0.5, 0.008),
+    })
+    BK.skin(body.data.materials[0], (0.4, 0.37, 0.33), (0.3, 0.28, 0.26), vein=(0.28, 0.27, 0.33), rough=0.3, wet=0.25,
+            dirt=(0.2, 0.18, 0.15), pores=0.3, mottle=0.4)
+    BK.cotton(bpy.data.materials["Shirt"], (0.82, 0.8, 0.72), stain=(0.55, 0.43, 0.2), stains=0.8)
+    BK.cotton(bpy.data.materials["Slacks"], (0.09, 0.09, 0.1), stain=(0.16, 0.14, 0.11), stains=0.4, rough=0.75, grime=(0.05, 0.05, 0.05))
+    BK.leather(bpy.data.materials["Shoe"], (0.05, 0.035, 0.025), rough=0.35, sole=(0.04, 0.04, 0.04))
+    body = join_all([body] + pieces + [collar(arm, "Shirt", r=0.047, thick=0.006, back=0.006)], "Watcher")
     decimate(body, 0.55)
+    surface([body], "watcher", 1024)
     attach(body, arm)
     rest = arm_rest_angles(arm)
     root = P(arm, "root")
