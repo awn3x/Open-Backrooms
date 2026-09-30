@@ -102,7 +102,7 @@ export class Game {
     setMaxAnisotropy(Math.min(this.preset.aniso, this.renderer.capabilities.getMaxAnisotropy()));
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, this.preset.pixelRatioCap));
     this.dyn = new DynamicRes(this.preset.scale, Math.min(0.5, this.preset.scale));
-    const s = { scale: this.preset.scale, blurSamples: settings.motionBlur > 0 ? this.preset.blurSamples : 0, blur: settings.motionBlur, bloom: this.preset.bloom, vhs: settings.vhs, grain: settings.grain };
+    const s = { scale: this.preset.scale, blurSamples: settings.motionBlur > 0 ? this.preset.blurSamples : 0, blur: settings.motionBlur, bloom: this.preset.bloom, vhs: settings.vhs, grain: settings.grain, msaa: this.preset.msaa, ssao: this.preset.ssao };
     if (!this.post) this.post = new Post(this.renderer, s);
     else {
       this.post.s = s;
@@ -124,18 +124,18 @@ export class Game {
   }
 
   async boot(progress: (f: number, label: string) => void) {
-    progress(0.05, 'Calibrating tape heads');
+    progress(0.05, 'Starting renderer');
     this.applyQuality();
-    progress(0.1, 'Loading fixtures');
-    this.protos = await loadProtos((f) => progress(0.1 + f * 0.4, 'Loading fixtures'));
-    progress(0.55, 'Tuning ballasts');
+    progress(0.1, 'Loading models');
+    this.protos = await loadProtos((f) => progress(0.1 + f * 0.4, 'Loading models'));
+    progress(0.55, 'Loading sound');
     await this.audio.init();
     await this.audio.preload([
       'step_carpet', 'step_concrete', 'step_metal', 'step_water', 'land_carpet', 'land_concrete', 'land_metal', 'cloth',
       'breath_calm', 'breath_tired', 'breath_panic', 'heartbeat', 'hum', 'spark', 'tube_flicker', 'ballast_click',
       'ui_click', 'ui_hover', 'vhs_insert', 'static_burst', 'tape_hiss', 'bottle_open', 'drink',
     ]);
-    progress(0.8, 'Rewinding');
+    progress(0.8, 'Almost there');
     void this.audio.preload(['knock', 'slam', 'howl', 'running', 'drip', 'power_down', 'power_up', 'crawler_click', 'crawler_rasp', 'crawler_scream', 'crawler_step', 'watcher_drone', 'smiler_drone', 'smiler_hiss', 'sting_spot', 'sting_chase', 'death', 'door_open', 'hatch_open', 'elevator_ding', 'elevator_doors', 'pipe_groan', 'steam_hiss', 'dweller_knock', 'dweller_groan', 'tinnitus', 'outlet_buzz']);
     this.lights = new LightRig(this.scene, this.preset.lights, this.preset.shadows, this.preset.shadowSize);
     progress(1, 'Ready');
@@ -193,6 +193,7 @@ export class Game {
     WU.uAccentCol.value.setRGB(...def.accentColor);
     WU.uAmbient.value = def.ambient;
     WU.uFogCol.value.setRGB(...def.fogColor);
+    WU.uBounceCol.value.setRGB(...def.bounceColor);
     WU.uFogDensity.value = def.fogDensity;
     WU.uWet.value = def.id === 1 ? 0.8 : def.id === 2 ? 0.3 : 0.25;
     const g = this.post.composite.uniforms;
@@ -216,8 +217,7 @@ export class Game {
     void this.audio.setReverb(def.audio.ir);
     await this.audio.preload([def.audio.amb]);
     const amb = this.audio.play(def.audio.amb, { loop: true, gain: 0.55, bus: 'amb' });
-    const hiss = this.audio.play('tape_hiss', { loop: true, gain: 0.12 * settings.vhs + 0.02, bus: 'amb' });
-    this.ambience = [amb, hiss].filter(Boolean) as Voice[];
+    this.ambience = [amb].filter(Boolean) as Voice[];
     this.hum = this.lights.slots.map(() => null);
 
     this.entities.setLevel(def, seed);

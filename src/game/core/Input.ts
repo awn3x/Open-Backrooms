@@ -7,6 +7,8 @@ export class Input {
   mouseDY = 0;
   locked = false;
   enabled = true;
+  /** raw (unaccelerated) mouse input; off by default so OS pointer speed applies */
+  raw = false;
   private canvas: HTMLElement;
   onLockChange?: (locked: boolean) => void;
 
@@ -40,7 +42,7 @@ export class Input {
   lock() {
     const c = this.canvas as HTMLElement & { requestPointerLock: (o?: unknown) => Promise<void> | void };
     try {
-      const r = c.requestPointerLock({ unadjustedMovement: true });
+      const r = c.requestPointerLock(this.raw ? { unadjustedMovement: true } : undefined);
       if (r && typeof (r as Promise<void>).catch === 'function') (r as Promise<void>).catch(() => c.requestPointerLock());
     } catch {
       c.requestPointerLock();

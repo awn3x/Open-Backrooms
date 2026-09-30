@@ -70,21 +70,17 @@ export class UI {
   ) {
     this.root = $('#ui');
     this.hud = h(`<div id="hud" class="hidden">
-      <div class="rec osd"><span class="dot"></span>REC</div>
-      <div class="tc osd">00:00:00</div>
-      <div class="signal osd"></div>
-      <div class="bat osd"><span class="cell"><span class="fill"></span></span></div>
-      <div class="coins osd"></div>
-      <div class="level osd"></div>
-      <div class="fps osd"></div>
-      <div class="talk osd hidden">● TRANSMITTING</div>
-      <div class="safe osd hidden">SAFE ZONE — ENTITIES CANNOT ENTER</div>
+      <div class="coins"></div>
+      <div class="level"></div>
+      <div class="fps"></div>
+      <div class="talk hidden">● Talking</div>
+      <div class="safe hidden">Safe zone</div>
       <div class="cross"></div>
-      <div class="prompt osd hidden"></div>
+      <div class="prompt hidden"></div>
       <div class="stamina"><i></i></div>
-      <div class="inv osd"></div>
-      <div class="date osd"></div>
-      <div id="title-card" class="osd"></div>
+      <div class="bat hidden"><span class="cell"><span class="fill"></span></span></div>
+      <div class="inv"></div>
+      <div id="title-card"></div>
     </div>`);
     this.root.append(this.hud);
     this.promptEl = $('.prompt', this.hud);
@@ -94,8 +90,6 @@ export class UI {
     this.toastsEl = h(`<div id="toasts"></div>`);
     this.root.append(this.toastsEl);
     this.root.append(h(`<div id="fade"></div>`));
-    const sig = $('.signal', this.hud);
-    sig.innerHTML = 'SIG ' + [6, 9, 12, 15, 18].map((px) => `<i style="height:${px}px"></i>`).join('');
 
     onCoins((d, reason) => {
       if (d > 0) this.toast(`+${d} BC${reason ? ' · ' + reason : ''}`, 'coin');
@@ -118,10 +112,10 @@ export class UI {
   // ------------------------------------------------------------------ boot
   bootScreen(onStart: () => void) {
     const el = h(`<div id="boot" class="interactive"><div class="inner">
-      <div class="play">▶ PLAY</div>
+      <div class="play">OPEN BACKROOMS</div>
       <div class="bar"><i></i></div>
       <div class="label">Loading…</div>
-      <button class="start hidden">[ INSERT TAPE ]</button>
+      <button class="start hidden">CLICK TO ENTER</button>
       <div class="warn">Headphones recommended. Contains flashing lights, loud sudden sounds and themes of isolation.<br>Free forever. No accounts, no payments — coins are earned by playing.</div>
     </div></div>`);
     this.root.append(el);
@@ -138,7 +132,7 @@ export class UI {
         label.textContent = l;
       },
       ready: () => {
-        label.textContent = 'Tape loaded.';
+        label.textContent = 'Ready.';
         btn.classList.remove('hidden');
       },
       error: (msg: string) => {
@@ -321,11 +315,10 @@ export class UI {
       <div data-p="video">
         <div class="field"><label>Quality</label><select class="q">${['auto', 'low', 'medium', 'high', 'ultra'].map((q) => `<option ${settings.quality === q ? 'selected' : ''}>${q}</option>`).join('')}</select></div>
         ${this.slider('fov', 'Field of view', 60, 100, 1)}
-        ${this.slider('vhs', 'Camcorder / VHS look', 0, 1, 0.05)}
-        ${this.slider('grain', 'Film grain', 0, 1.5, 0.05)}
+        ${this.slider('vhs', 'Old tape look', 0, 1, 0.05)}
+        ${this.slider('grain', 'Film grain', 0, 1, 0.02)}
         ${this.slider('motionBlur', 'Motion blur', 0, 1.2, 0.05)}
         ${this.slider('headBob', 'Head motion', 0, 1.5, 0.05)}
-        ${this.check('camcorder', 'Camcorder overlay (REC / timecode)')}
         ${this.check('showFps', 'Show FPS')}
       </div>
       <div data-p="audio" class="hidden">
@@ -336,8 +329,9 @@ export class UI {
         <div class="field"><label>Microphone</label><select class="mic"><option value="ptt" ${settings.micMode === 'ptt' ? 'selected' : ''}>Push-to-talk (V)</option><option value="open" ${settings.micMode === 'open' ? 'selected' : ''}>Open mic</option><option value="off" ${settings.micMode === 'off' ? 'selected' : ''}>Off</option></select></div>
       </div>
       <div data-p="controls" class="hidden">
-        ${this.slider('sensitivity', 'Mouse sensitivity', 0.2, 3, 0.05)}
+        ${this.slider('sensitivity', 'Mouse sensitivity', 0.1, 5, 0.05)}
         ${this.check('invertY', 'Invert Y axis')}
+        ${this.check('rawInput', 'Raw mouse input (ignore OS acceleration)')}
         <p class="sub">Gamepads are supported (left stick move, right stick look, A interact, Y flashlight, LB sprint, B crouch).</p>
       </div>
       <div data-p="social" class="hidden">
@@ -416,7 +410,7 @@ export class UI {
 
   private openShop() {
     const render = () => {
-      const w = this.openModal(`<h2>SUPPLY KIOSK</h2><div class="sub">Balance: <b class="osd" style="color:var(--accent);font-size:22px">${profile.coins} BC</b> — earned by exploring, surviving and escaping. No real money accepted (or possible).</div>
+      const w = this.openModal(`<h2>SUPPLY KIOSK</h2><div class="sub">Balance: <b style="color:var(--accent)">${profile.coins} BC</b> — earned by exploring, surviving and escaping. No real money accepted (or possible).</div>
         <div class="grid">${SHOP.map((it) => {
           const owned = it.kind !== 'consumable' && (profile.owned.includes(it.id) || (it.id === 'torch_pro' && profile.flashlight === 'torch_pro'));
           const worn = it.kind === 'outfit' && profile.outfit === it.id;
@@ -510,7 +504,7 @@ export class UI {
       return;
     }
     const verb = kind === 'pickup' ? 'Take' : kind === 'exit' ? 'Enter' : kind === 'couch' ? 'Sit' : 'Use';
-    this.promptEl.innerHTML = `<b>[E]</b> ${verb} ${esc(label)}`;
+    this.promptEl.innerHTML = `<i>E</i> ${verb} ${esc(label)}`;
     this.promptEl.classList.remove('hidden');
   }
 
@@ -610,24 +604,16 @@ export class UI {
     const g = this.game;
     if (!this.inGame) return;
     const p = g.player;
-    const lt = g.levelTime;
-    const pad = (n: number) => String(Math.floor(n)).padStart(2, '0');
-    const cam = settings.camcorder;
-    for (const s of ['.rec', '.tc', '.date', '.signal', '.bat']) $(s, this.hud).classList.toggle('hidden', !cam);
-    $('.tc', this.hud).textContent = `${pad(lt / 3600)}:${pad((lt / 60) % 60)}:${pad(lt % 60)}`;
-    const now = new Date();
-    $('.date', this.hud).textContent = `${now.toLocaleString('en-US', { month: 'short' }).toUpperCase()}. ${now.getDate()} 1996  ${pad(now.getHours() % 12 || 12)}:${pad(now.getMinutes())} ${now.getHours() < 12 ? 'AM' : 'PM'}`;
+    const bat = $('.bat', this.hud);
+    bat.classList.toggle('hidden', !p.flashlight);
     ($('.bat .fill', this.hud) as HTMLElement).style.width = `${Math.round(p.battery * 100)}%`;
-    $('.bat', this.hud).style.opacity = p.flashlight ? '1' : '0.45';
-    const bars = Math.ceil(g.sanity * 5);
-    $('.signal', this.hud).querySelectorAll('i').forEach((el, i) => el.classList.toggle('on', i < bars));
     const def = LEVELS[g.level];
-    $('.level', this.hud).textContent = `${def.name.toUpperCase()} · ${def.subtitle.toUpperCase()}`;
+    $('.level', this.hud).textContent = `${def.name} · ${def.subtitle}`;
     $('.fps', this.hud).textContent = settings.showFps ? `${Math.round(g.debug.fps)} FPS · ${g.debug.calls} DC` : '';
     const st = $('.stamina', this.hud);
     st.style.opacity = p.stamina < 0.98 ? '1' : '0';
     ($('i', st) as HTMLElement).style.width = `${p.stamina * 100}%`;
-    $('.inv', this.hud).innerHTML = `<b>${profile.inventory.almond ?? 0}</b> ALMOND WATER [Q]<br><b>${profile.inventory.battery ?? 0}</b> BATTERIES [R]`;
+    $('.inv', this.hud).innerHTML = `<span><b>${profile.inventory.almond ?? 0}</b> Almond Water <i>Q</i></span><span><b>${profile.inventory.battery ?? 0}</b> Batteries <i>R</i></span>`;
     $('.talk', this.hud).classList.toggle('hidden', !(g.net?.pttDown || (settings.micMode === 'open' && g.net?.micOn)));
     const c = def.cell;
     const inBase = g.level === 0 && Math.abs(p.pos.x / c - 0.5) < 2.5 && Math.abs(p.pos.z / c - 0.5) < 2.5;

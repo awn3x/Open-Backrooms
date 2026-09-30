@@ -1,4 +1,3 @@
-import '@fontsource/vt323';
 import '@fontsource/inter/400.css';
 import '@fontsource/inter/600.css';
 import { Game } from './Game';
@@ -112,9 +111,11 @@ const ui = new UI(game, {
     game.post.s.vhs = settings.vhs;
     game.post.s.grain = settings.grain;
     game.post.s.blur = settings.motionBlur;
+    game.input.raw = settings.rawInput;
   },
 });
 game.ui = ui;
+game.input.raw = settings.rawInput;
 
 function ensureNet() {
   if (!game.net) {
@@ -144,7 +145,6 @@ game.input.onLockChange = (locked) => {
 
 const boot = ui.bootScreen(async () => {
   game.audio.resume();
-  game.audio.play('vhs_insert', { bus: 'ui', gain: 0.8 });
   if (inviteRoom) {
     const name = inviteRoom.toLowerCase().replace(/[^a-z0-9-_]+/g, '-').slice(0, 32);
     game.menuMode = true;

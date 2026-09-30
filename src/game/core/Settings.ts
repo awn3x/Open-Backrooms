@@ -21,7 +21,7 @@ export interface Settings {
   chat: boolean;
   profanityFilter: boolean;
   showFps: boolean;
-  camcorder: boolean;
+  rawInput: boolean;
 }
 
 export const DEFAULTS: Settings = {
@@ -30,10 +30,10 @@ export const DEFAULTS: Settings = {
   fov: 78,
   invertY: false,
   quality: 'auto',
-  vhs: 0.45,
-  grain: 0.8,
-  motionBlur: 0.6,
-  headBob: 1,
+  vhs: 0.1,
+  grain: 0.12,
+  motionBlur: 0.45,
+  headBob: 0.6,
   master: 0.9,
   sfx: 1,
   ambience: 1,
@@ -42,7 +42,7 @@ export const DEFAULTS: Settings = {
   chat: true,
   profanityFilter: true,
   showFps: false,
-  camcorder: true,
+  rawInput: false,
 };
 
 function read<T>(key: string, fallback: T): T {
@@ -65,11 +65,13 @@ function write(key: string, v: unknown) {
 const ADJ = ['Lost', 'Damp', 'Quiet', 'Humming', 'Yellow', 'Pale', 'Wandering', 'Static', 'Hollow', 'Flickering'];
 const NOUN = ['Wanderer', 'Tenant', 'Moth', 'Clerk', 'Signal', 'Drifter', 'Janitor', 'Echo', 'Visitor', 'Surveyor'];
 
-export const settings: Settings = read('ob.settings', DEFAULTS);
+export const settings: Settings = read('ob.settings2', DEFAULTS);
+// carry the player's name over from the previous settings version
+if (!settings.name) settings.name = read<{ name?: string }>('ob.settings', {}).name ?? '';
 if (!settings.name) settings.name = ADJ[Math.floor(Math.random() * ADJ.length)] + NOUN[Math.floor(Math.random() * NOUN.length)] + Math.floor(Math.random() * 90 + 10);
 
 export function saveSettings() {
-  write('ob.settings', settings);
+  write('ob.settings2', settings);
 }
 
 // ------------------------------------------------------------------ profile

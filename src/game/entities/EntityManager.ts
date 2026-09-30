@@ -7,6 +7,7 @@ import type { Game } from '../Game';
 import type { EntityKind, LevelDef } from '../levels/levels';
 import { loadGLTF } from '../assets';
 import { patchEntityMaterial } from '../render/materials';
+import { blobShadow } from '../render/blob';
 import { findPath } from './Pathfinding';
 import { inHub, Z_DARK } from '../world/layout';
 import { clamp, damp, Rng } from '../core/rng';
@@ -193,6 +194,7 @@ export class EntityManager {
     const e = new Entity(this.nextId++, kind, obj, t.clips);
     e.pos.set(x, 0, z);
     obj.position.copy(e.pos);
+    if (kind !== 'smiler') obj.add(blobShadow(kind === 'watcher' ? 0.45 : 0.7, kind === 'watcher' ? 0.35 : 0.5));
     this.root.add(obj);
     this.list.push(e);
     e.play(kind === 'watcher' || kind === 'mimic' ? 'idle' : 'idle');
