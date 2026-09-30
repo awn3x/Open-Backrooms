@@ -11,6 +11,16 @@
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="theme-color" content="#0b0a07" />
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <script>
+      // Shown only if this file is served without the Vite build (e.g. Pages set to "Deploy from a branch").
+      addEventListener('DOMContentLoaded', function () {
+        if (!document.querySelector('script[src$=".ts"]')) return;
+        document.body.innerHTML = '<div style="font:16px/1.6 system-ui;max-width:640px;margin:15vh auto;padding:0 20px;color:#ece5c8">' +
+          '<h1 style="font-weight:600">Open Backrooms isn\'t built yet</h1>' +
+          '<p>This is the raw source. In the repository go to <b>Settings \u2192 Pages \u2192 Source</b>, choose <b>GitHub Actions</b>, then re-run the <b>Deploy to GitHub Pages</b> workflow from the Actions tab.</p></div>';
+        document.body.style.background = '#0b0a07';
+      });
+    </script>
   </head>
   <body>
     <header class="nav">
