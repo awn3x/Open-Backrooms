@@ -3,17 +3,27 @@
   "framework": "vite",
   "installCommand": "npm ci",
   "buildCommand": "npm run build",
-  "outputDirectory": "dist",
+  "outputDirectory": "docs",
   "cleanUrls": false,
   "trailingSlash": true,
   "headers": [
     {
       "source": "/assets/(.*)",
-      "headers": [{ "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" }]
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=86400, stale-while-revalidate=604800"
+        }
+      ]
     },
     {
       "source": "/(.*)",
-      "headers": [{ "key": "Permissions-Policy", "value": "microphone=(self)" }]
+      "headers": [
+        {
+          "key": "Permissions-Policy",
+          "value": "microphone=(self)"
+        }
+      ]
     }
   ]
 }

@@ -1,7 +1,7 @@
 // Gameplay smoke test: AI mode, entity rendering, walking, UI panels.
 import { chromium } from 'playwright-core';
 import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path';
-const root = path.resolve('dist');
+const root = path.resolve('docs');
 const out = path.resolve(process.argv[2] || 'tools/out/play');
 fs.mkdirSync(out, { recursive: true });
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.webp': 'image/webp', '.json': 'application/json', '.svg': 'image/svg+xml' };
@@ -12,7 +12,7 @@ const page = await b.newPage({ viewport: { width: 1280, height: 720 } });
 const errors = [];
 page.on('pageerror', (e) => errors.push('pageerror: ' + e));
 page.on('console', (m) => m.type() === 'error' && !m.text().includes('pointer') && errors.push(m.text()));
-await page.goto('http://localhost:4183/play/');
+await page.goto('http://localhost:4183/');
 await page.waitForSelector('#boot .start:not(.hidden)', { timeout: 120000 });
 await page.click('#boot .start');
 await page.waitForSelector('#menu', { timeout: 120000 });

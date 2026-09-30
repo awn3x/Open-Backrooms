@@ -75,8 +75,6 @@ export class Player {
   private lastFoot = 0;
   private bobAmp = 0;
   private roll = 0;
-  private yawVel = 0;
-  private lastYaw = 0;
   private strafe = 0;
   private breath = 0;
   private spring = new Spring(80, 11);
@@ -106,7 +104,7 @@ export class Player {
     this.time += dt;
     const inp = this.input;
     const pad = inp.pad();
-    const sens = 0.0021 * settings.sensitivity;
+    const sens = 0.0032 * settings.sensitivity;
     if (!this.frozen) {
       this.yaw -= inp.mouseDX * sens + (pad ? pad.lx * dt * 2.6 : 0);
       this.pitch -= (inp.mouseDY * sens + (pad ? pad.ly * dt * 2.0 : 0)) * (settings.invertY ? -1 : 1);
@@ -136,24 +134,24 @@ export class Player {
     const wantSprint = !this.crouching && (inp.down('ShiftLeft') || inp.down('ShiftRight') || !!pad?.sprint) && mz < 0;
     const exhausted = this.stamina < 0.05;
     this.sprinting = wantSprint && !exhausted && ml > 0.1;
-    const maxSpeed = this.crouching ? 0.85 : this.sprinting ? 4.3 + this.fear * 0.5 : 1.45;
+    const maxSpeed = this.crouching ? 1.4 : this.sprinting ? 5.4 : 2.9;
     // stamina
-    if (this.sprinting) this.stamina = Math.max(0, this.stamina - dt * 0.11);
-    else this.stamina = Math.min(1, this.stamina + dt * (ml > 0.1 ? 0.06 : 0.12));
+    if (this.sprinting) this.stamina = Math.max(0, this.stamina - dt * 0.09);
+    else this.stamina = Math.min(1, this.stamina + dt * (ml > 0.1 ? 0.08 : 0.16));
 
     // --- acceleration toward target velocity in world space
     const sy = Math.sin(this.yaw);
     const cy = Math.cos(this.yaw);
     const tx = (mx * cy + mz * sy) * maxSpeed;
     const tz = (-mx * sy + mz * cy) * maxSpeed;
-    const accel = ml > 0.1 ? (this.sprinting ? 5.5 : 7.5) : 9.5;
+    const accel = ml > 0.1 ? 14 : 16;
     const k = damp(accel, dt);
     this.vel.x = lerp(this.vel.x, tx, k);
     this.vel.z = lerp(this.vel.z, tz, k);
 
     // jump
     if (this.onGround && !this.frozen && inp.hit('Space') && !this.crouching && this.stamina > 0.1) {
-      this.vy = 3.1;
+      this.vy = 3.6;
       this.onGround = false;
       this.stamina -= 0.08;
     }
@@ -164,8 +162,7 @@ export class Player {
         this.pos.y = 0;
         this.onGround = true;
         this.landVel = -this.vy;
-        this.spring.kick(0, -this.landVel * 0.35, 0);
-        this.rotSpring.kick(-this.landVel * 0.02, 0, (Math.random() - 0.5) * 0.02);
+        this.spring.kick(0, -this.landVel * 0.25, 0);
         this.onStep?.({ foot: 1, speed: this.landVel, loudness: clamp(this.landVel / 4, 0.3, 1), landing: true });
         this.vy = 0;
       }
@@ -183,8 +180,7 @@ export class Player {
       const into = -(this.vel.x * r.nx + this.vel.z * r.nz);
       if (into > 2.2) {
         this.onBump?.(into);
-        this.spring.kick(-r.nx * into * 0.05, -0.05 * into, -r.nz * into * 0.05);
-        this.rotSpring.kick(0.03 * into, 0, (Math.random() - 0.5) * 0.06 * into);
+        this.spring.kick(-r.nx * into * 0.02, -0.02 * into, -r.nz * into * 0.02);
       }
       // remove velocity into the wall
       if (into > 0) {
@@ -197,59 +193,47 @@ export class Player {
     const speed = moved / Math.max(dt, 1e-4);
 
     // --- gait phase (one footfall per half cycle)
-    const stride = this.sprinting ? 1.05 : this.crouching ? 0.5 : 0.72;
+    const stride = this.sprinting ? 1.35 : this.crouching ? 0.7 : 0.9;
     if (this.onGround) this.phase += (moved / stride) * Math.PI;
     const foot = Math.floor(this.phase / Math.PI);
     if (foot !== this.lastFoot && this.onGround && speed > 0.25) {
       this.lastFoot = foot;
       const loud = this.crouching ? 0.12 : this.sprinting ? 1 : 0.4;
       this.onStep?.({ foot: foot % 2 === 0 ? -1 : 1, speed, loudness: loud });
-      // footfall dip
-      this.spring.kick(0, -0.08 * (this.sprinting ? 1.6 : 1), 0);
     }
     if (speed < 0.2) this.lastFoot = foot;
 
-    // --- head motion
+    // --- head motion: positional only, so aim never drifts
     const hb = settings.headBob;
-    const targetAmp = clamp(speed / 1.45, 0, 3) * hb;
-    this.bobAmp = lerp(this.bobAmp, targetAmp, damp(6, dt));
+    const targetAmp = clamp(speed / 2.9, 0, 1.6) * hb;
+    this.bobAmp = lerp(this.bobAmp, targetAmp, damp(8, dt));
     const ph = this.phase;
-    const bobY = (Math.cos(ph * 2) * -0.5 - 0.5) * 0.024 * this.bobAmp; // dips twice per cycle
-    const bobX = Math.sin(ph) * 0.018 * this.bobAmp;
-    // yaw velocity lean
-    const dy = this.yaw - this.lastYaw;
-    this.lastYaw = this.yaw;
-    this.yawVel = lerp(this.yawVel, dy / Math.max(dt, 1e-4), damp(10, dt));
-    this.strafe = lerp(this.strafe, mx, damp(5, dt));
-    const targetRoll = (Math.sin(ph) * 0.009 * this.bobAmp - this.strafe * 0.018 * hb - clamp(this.yawVel, -4, 4) * 0.006 * hb);
-    this.roll = lerp(this.roll, targetRoll, damp(8, dt));
-    // breathing: faster with exertion / fear
-    const exertion = clamp((1 - this.stamina) * 1.4 + this.fear * 0.8, 0, 1.6);
-    this.breath += dt * (1.3 + exertion * 2.2);
-    const breathY = Math.sin(this.breath) * (0.004 + exertion * 0.006) * hb;
-    const breathP = Math.sin(this.breath + 0.6) * (0.0025 + exertion * 0.004) * hb;
-    // handheld tremor
-    const tr = (0.0016 + this.fear * 0.006 + (this.sprinting ? 0.003 : 0)) * hb;
-    const tt = this.time * (0.9 + this.fear * 2.5);
-    const tp = n1(tt, 1) * tr;
-    const ty = n1(tt, 2) * tr;
-    const trl = n1(tt * 0.7, 3) * tr * 1.5;
+    const bobY = (Math.cos(ph * 2) * 0.5 - 0.5) * 0.012 * this.bobAmp;
+    const bobX = Math.sin(ph) * 0.008 * this.bobAmp;
+    this.strafe = lerp(this.strafe, mx, damp(6, dt));
+    this.roll = lerp(this.roll, -this.strafe * 0.008 * hb, damp(6, dt));
+    // gentle breathing rise/fall when standing still (position only)
+    const exertion = clamp((1 - this.stamina) * 1.4, 0, 1);
+    this.breath += dt * (1.2 + exertion * 1.6);
+    const breathY = Math.sin(this.breath) * (0.0025 + exertion * 0.004) * hb;
+    // fear tremor only when genuinely threatened
+    const tr = Math.max(0, this.fear - 0.5) * 0.004 * hb;
+    const tp = n1(this.time * 3, 1) * tr;
+    const ty = n1(this.time * 3, 2) * tr;
 
     this.spring.step(dt);
     this.rotSpring.step(dt);
 
-    const eyeTarget = this.crouching ? 1.0 : 1.62;
-    this.eye = lerp(this.eye, eyeTarget, damp(this.crouching ? 9 : 6, dt));
+    const eyeTarget = this.crouching ? 1.05 : 1.65;
+    this.eye = lerp(this.eye, eyeTarget, damp(12, dt));
     const cam = this.camera;
     cam.position.set(this.pos.x, this.pos.y + this.eye + bobY + breathY + this.spring.x.y, this.pos.z);
-    // lateral sway along the right vector
     cam.position.x += cy * bobX + this.spring.x.x;
     cam.position.z += -sy * bobX + this.spring.x.z;
-    const e = new THREE.Euler(this.pitch + breathP + tp + this.rotSpring.x.x - (this.bobAmp * 0.004 * Math.abs(Math.sin(ph))), this.yaw + ty + this.rotSpring.x.y, this.roll + trl + this.rotSpring.x.z, 'YXZ');
+    const e = new THREE.Euler(this.pitch + tp + this.rotSpring.x.x, this.yaw + ty + this.rotSpring.x.y, this.roll + this.rotSpring.x.z, 'YXZ');
     cam.quaternion.setFromEuler(e);
-    // FOV: sprint & fear
-    const fovT = settings.fov + (this.sprinting ? 4 : 0) - this.fear * 6;
-    cam.fov = lerp(cam.fov, fovT, damp(3, dt));
+    const fovT = settings.fov + (this.sprinting ? 3 : 0);
+    cam.fov = lerp(cam.fov, fovT, damp(4, dt));
     cam.updateProjectionMatrix();
   }
 

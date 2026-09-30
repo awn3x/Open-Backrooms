@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { clone as skClone } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { loadGLTF } from '../assets';
 import { patchEntityMaterial } from '../render/materials';
+import { blobShadow } from '../render/blob';
 
 let tpl: Promise<{ scene: THREE.Object3D; clips: THREE.AnimationClip[] }> | null = null;
 function template() {
@@ -42,7 +43,7 @@ function nameTag(text: string) {
   c.width = 256;
   c.height = 64;
   const g = c.getContext('2d')!;
-  g.font = '28px VT323, monospace';
+  g.font = '600 22px Inter, system-ui, sans-serif';
   g.textAlign = 'center';
   g.fillStyle = 'rgba(0,0,0,0.45)';
   const w = Math.min(250, g.measureText(text).width + 20);
@@ -77,7 +78,7 @@ export class Avatar {
           patchEntityMaterial(m.material as THREE.MeshStandardMaterial);
         }
       });
-      this.root.add(o);
+      this.root.add(o, blobShadow(0.42, 0.34));
       this.mixer = new THREE.AnimationMixer(o);
       for (const c of clips) this.actions.set(c.name, this.mixer.clipAction(c));
       this.play('idle');

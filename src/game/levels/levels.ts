@@ -38,6 +38,7 @@ export interface LevelDef {
   deadChance: number;
   ambient: number;
   // --- look
+  bounceColor: [number, number, number];
   fogColor: [number, number, number];
   fogDensity: number;
   exposure: number;
@@ -80,10 +81,11 @@ export const LEVELS: LevelDef[] = [
     flickerChance: 0.05,
     deadChance: 0.06,
     ambient: 0.015,
+    bounceColor: [0.62, 0.5, 0.24],
     fogColor: [0.62, 0.55, 0.3],
     fogDensity: 0.026,
     exposure: 0.92,
-    grade: { tint: [1.04, 1.0, 0.84], saturation: 0.98, contrast: 1.1, lift: 0.01 },
+    grade: { tint: [1.06, 1.0, 0.8], saturation: 1.14, contrast: 1.08, lift: 0.004 },
     tex: { wall: 'l0_wallpaper', floor: 'l0_carpet', ceil: 'l0_ceiling', wallScale: 1.0, floorScale: 0.5, wallTint: [1, 1, 1] },
     surface: 'carpet',
     audio: { amb: 'amb_l0', ir: 'ir_l0' },
@@ -119,6 +121,7 @@ export const LEVELS: LevelDef[] = [
     flickerChance: 0.08,
     deadChance: 0.18,
     ambient: 0.01,
+    bounceColor: [0.36, 0.37, 0.37],
     fogColor: [0.42, 0.46, 0.48],
     fogDensity: 0.04,
     exposure: 1.05,
@@ -158,6 +161,7 @@ export const LEVELS: LevelDef[] = [
     flickerChance: 0.15,
     deadChance: 0.2,
     ambient: 0.012,
+    bounceColor: [0.34, 0.26, 0.2],
     fogColor: [0.28, 0.2, 0.16],
     fogDensity: 0.05,
     exposure: 1.1,

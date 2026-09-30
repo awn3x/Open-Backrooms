@@ -60,7 +60,7 @@ void main() {
 const COMPOSITE = /* glsl */ `
 #include <common>
 #include <tonemapping_pars_fragment>
-uniform sampler2D tScene; uniform sampler2D tDepth; uniform sampler2D tBloom;
+uniform sampler2D tScene; uniform sampler2D tDepth; uniform sampler2D tBloom; uniform sampler2D tAO; uniform float uAO;
 uniform mat4 uInvViewProj; uniform mat4 uPrevViewProj;
 uniform float uBlur; uniform float uBloom; uniform float uExposure;
 uniform vec3 uTint; uniform float uSat; uniform float uContrast; uniform float uLift;
@@ -89,6 +89,7 @@ void main() {
     }
   }
   #endif
+  if (uAO > 0.0) { float ao = texture2D(tAO, vUv).r; col *= mix(1.0, ao * ao, uAO); }
   col += texture2D(tBloom, vUv).rgb * uBloom;
   col *= uExposure;
   col = AgXToneMapping(col);
@@ -105,47 +106,107 @@ void main() {
 
 const VHS = /* glsl */ `
 uniform sampler2D tSrc; uniform vec2 uRes; uniform float uTime; uniform float uAmt; uniform float uGrain;
-uniform float uGlitch; uniform float uVignette; uniform float uHaze;
+uniform float uGlitch; uniform float uVignette; uniform float uHaze; uniform float uSharpen; uniform float uFxaa;
 varying vec2 vUv;
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
-vec3 rgb2yiq(vec3 c) { return vec3(dot(c, vec3(0.299, 0.587, 0.114)), dot(c, vec3(0.596, -0.274, -0.322)), dot(c, vec3(0.211, -0.523, 0.312))); }
-vec3 yiq2rgb(vec3 c) { return vec3(c.x + 0.956 * c.y + 0.621 * c.z, c.x - 0.272 * c.y - 0.647 * c.z, c.x - 1.106 * c.y + 1.703 * c.z); }
+float luma(vec3 c) { return sqrt(dot(c, vec3(0.299, 0.587, 0.114))); }
+vec3 fxaa(vec2 uv, vec2 px) {
+  vec3 rgbM = texture2D(tSrc, uv).rgb;
+  vec3 rgbNW = texture2D(tSrc, uv + vec2(-1.0, -1.0) * px).rgb;
+  vec3 rgbNE = texture2D(tSrc, uv + vec2(1.0, -1.0) * px).rgb;
+  vec3 rgbSW = texture2D(tSrc, uv + vec2(-1.0, 1.0) * px).rgb;
+  vec3 rgbSE = texture2D(tSrc, uv + vec2(1.0, 1.0) * px).rgb;
+  float lM = luma(rgbM), lNW = luma(rgbNW), lNE = luma(rgbNE), lSW = luma(rgbSW), lSE = luma(rgbSE);
+  float lMin = min(lM, min(min(lNW, lNE), min(lSW, lSE)));
+  float lMax = max(lM, max(max(lNW, lNE), max(lSW, lSE)));
+  if (lMax - lMin < max(0.0312, lMax * 0.125)) return rgbM;
+  vec2 dir = vec2(-((lNW + lNE) - (lSW + lSE)), ((lNW + lSW) - (lNE + lSE)));
+  float red = max((lNW + lNE + lSW + lSE) * 0.03125, 1.0 / 128.0);
+  float rcp = 1.0 / (min(abs(dir.x), abs(dir.y)) + red);
+  dir = clamp(dir * rcp, -8.0, 8.0) * px;
+  vec3 a = 0.5 * (texture2D(tSrc, uv + dir * (1.0 / 3.0 - 0.5)).rgb + texture2D(tSrc, uv + dir * (2.0 / 3.0 - 0.5)).rgb);
+  vec3 b = a * 0.5 + 0.25 * (texture2D(tSrc, uv + dir * -0.5).rgb + texture2D(tSrc, uv + dir * 0.5).rgb);
+  float lB = luma(b);
+  return (lB < lMin || lB > lMax) ? a : b;
+}
 void main() {
   vec2 uv = vUv;
-  // mild barrel distortion
   vec2 cc = uv - 0.5;
-  uv = 0.5 + cc * (1.0 + dot(cc, cc) * 0.06 * uAmt);
-  // tracking: a thin band that rarely drifts through, and glitch jolts
-  float band = smoothstep(0.012, 0.0, abs(uv.y - fract(uTime * 0.043)));
+  // only a scare/death glitch displaces the image; normal play is clean
   float jitter = (hash(vec2(floor(uv.y * 240.0), floor(uTime * 30.0))) - 0.5);
-  uv.x += band * 0.004 * uAmt + jitter * (0.0006 * uAmt + 0.02 * uGlitch);
+  uv.x += jitter * 0.02 * uGlitch;
   uv.y += uGlitch * 0.01 * sin(uTime * 90.0);
-  // heat haze (level 2)
-  uv += uHaze * 0.0018 * vec2(sin(uv.y * 60.0 + uTime * 3.0), cos(uv.x * 50.0 + uTime * 2.3));
+  uv += uHaze * 0.0012 * vec2(sin(uv.y * 60.0 + uTime * 3.0), cos(uv.x * 50.0 + uTime * 2.3));
   vec2 px = 1.0 / uRes;
-  // chroma resolution loss: luma sharp, chroma smeared horizontally
-  float ca = (0.0012 + 0.004 * uGlitch) * uAmt;
-  vec2 dir = (uv - 0.5);
-  vec3 c0 = texture2D(tSrc, uv).rgb;
-  vec3 y = rgb2yiq(c0);
-  vec3 ch = vec3(0.0);
-  for (int i = -3; i <= 3; i++) ch += rgb2yiq(texture2D(tSrc, uv + vec2(float(i) * 1.6 * uAmt, 0.0) * px).rgb);
-  ch /= 7.0;
-  vec3 col = yiq2rgb(vec3(y.x, mix(y.y, ch.y, uAmt), mix(y.z, ch.z, uAmt)));
-  col.r = mix(col.r, texture2D(tSrc, uv + dir * ca).r, 0.6);
-  col.b = mix(col.b, texture2D(tSrc, uv - dir * ca).b, 0.6);
-  // luma-weighted grain (stronger in the shadows), animated per frame
+  vec3 col = uFxaa > 0.5 ? fxaa(uv, px) : texture2D(tSrc, uv).rgb;
+  // contrast-adaptive sharpening (AMD CAS-style, 4 neighbours)
+  vec3 n = texture2D(tSrc, uv + vec2(0.0, -px.y)).rgb;
+  vec3 s2 = texture2D(tSrc, uv + vec2(0.0, px.y)).rgb;
+  vec3 e = texture2D(tSrc, uv + vec2(px.x, 0.0)).rgb;
+  vec3 w = texture2D(tSrc, uv + vec2(-px.x, 0.0)).rgb;
+  vec3 mn = min(col, min(min(n, s2), min(e, w)));
+  vec3 mx = max(col, max(max(n, s2), max(e, w)));
+  vec3 amp = sqrt(clamp(min(mn, 1.0 - mx) / max(mx, 1e-4), 0.0, 1.0));
+  vec3 wgt = -amp * mix(0.125, 0.2, uSharpen);
+  col = clamp((col + (n + s2 + e + w) * wgt) / (1.0 + 4.0 * wgt), 0.0, 1.0);
+  // very faint tape character: slight chroma offset toward the edges
+  float ca = (0.0006 + 0.004 * uGlitch) * uAmt;
+  col.r = mix(col.r, texture2D(tSrc, uv + cc * ca).r, 0.5 * uAmt);
+  col.b = mix(col.b, texture2D(tSrc, uv - cc * ca).b, 0.5 * uAmt);
+  // fine film grain, strongest in shadows
   float g = hash(uv * uRes + fract(uTime * 7.13) * 100.0) - 0.5;
   float lum = dot(col, vec3(0.299, 0.587, 0.114));
-  col += g * uGrain * (0.055 + 0.07 * (1.0 - lum));
-  // faint scanline / tape noise
-  col *= 1.0 - 0.025 * uAmt * sin(uv.y * uRes.y * 1.5);
-  col += band * 0.04 * uAmt;
-  // vignette
-  float v = smoothstep(0.85, 0.2, length(cc * vec2(1.0, 0.8)));
+  col += g * uGrain * (0.025 + 0.04 * (1.0 - lum));
+  float v = smoothstep(0.9, 0.25, length(cc * vec2(1.0, 0.8)));
   col *= mix(1.0, v, uVignette);
-  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) col = vec3(0.0);
   gl_FragColor = vec4(sRGBTransferOETF(vec4(max(col, 0.0), 1.0)).rgb, 1.0);
+}`;
+
+const SSAO = /* glsl */ `
+uniform sampler2D tDepth; uniform mat4 uProj; uniform mat4 uInvProj; uniform vec2 uTexel; uniform float uRadius; uniform float uTime;
+varying vec2 vUv;
+vec3 viewPos(vec2 uv) {
+  float d = texture2D(tDepth, uv).x;
+  vec4 p = uInvProj * vec4(uv * 2.0 - 1.0, d * 2.0 - 1.0, 1.0);
+  return p.xyz / p.w;
+}
+float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+void main() {
+  float d = texture2D(tDepth, vUv).x;
+  if (d >= 1.0) { gl_FragColor = vec4(1.0); return; }
+  vec3 P = viewPos(vUv);
+  vec3 N = normalize(cross(dFdx(P), dFdy(P)));
+  float occ = 0.0;
+  float a0 = hash(vUv * 731.0) * 6.2831;
+  const int S = 10;
+  for (int i = 0; i < S; i++) {
+    float t = (float(i) + 0.5) / float(S);
+    float ang = a0 + float(i) * 2.39996;
+    float r = uRadius * t * t * 0.9 + 0.05;
+    vec3 dir = normalize(vec3(cos(ang) * sqrt(1.0 - t), sin(ang) * sqrt(1.0 - t), sqrt(t) + 0.2));
+    // orient hemisphere around N
+    vec3 up = abs(N.z) < 0.99 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
+    vec3 T = normalize(cross(up, N));
+    vec3 B = cross(N, T);
+    vec3 sp = P + (T * dir.x + B * dir.y + N * dir.z) * r;
+    vec4 cp = uProj * vec4(sp, 1.0);
+    vec2 suv = cp.xy / cp.w * 0.5 + 0.5;
+    if (suv.x < 0.0 || suv.x > 1.0 || suv.y < 0.0 || suv.y > 1.0) continue;
+    float sz = viewPos(suv).z;
+    float range = smoothstep(0.0, 1.0, uRadius / abs(P.z - sz));
+    occ += (sz >= sp.z + 0.02 ? 1.0 : 0.0) * range;
+  }
+  float ao = 1.0 - occ / float(S);
+  gl_FragColor = vec4(vec3(ao), 1.0);
+}`;
+
+const AOBLUR = /* glsl */ `
+uniform sampler2D tSrc; uniform vec2 uTexel;
+varying vec2 vUv;
+void main() {
+  float s = 0.0;
+  for (int y = -1; y <= 1; y++) for (int x = -1; x <= 1; x++) s += texture2D(tSrc, vUv + vec2(float(x), float(y)) * uTexel * 1.5).r;
+  gl_FragColor = vec4(vec3(s / 9.0), 1.0);
 }`;
 
 export interface PostSettings {
@@ -155,11 +216,17 @@ export interface PostSettings {
   bloom: number;
   vhs: number;
   grain: number;
+  msaa: number;
+  ssao: boolean;
 }
 
 export class Post {
   private sceneRT!: THREE.WebGLRenderTarget;
   private ldrRT!: THREE.WebGLRenderTarget;
+  private aoRT!: THREE.WebGLRenderTarget;
+  private aoBlurRT!: THREE.WebGLRenderTarget;
+  private ssao = fsMat(SSAO, { tDepth: { value: null }, uProj: { value: new THREE.Matrix4() }, uInvProj: { value: new THREE.Matrix4() }, uTexel: { value: new THREE.Vector2() }, uRadius: { value: 0.55 }, uTime: { value: 0 } });
+  private aoBlur = fsMat(AOBLUR, { tSrc: { value: null }, uTexel: { value: new THREE.Vector2() } });
   private bloomRTs: THREE.WebGLRenderTarget[] = [];
   private upRTs: THREE.WebGLRenderTarget[] = [];
   private quad: THREE.Mesh;
@@ -176,7 +243,9 @@ export class Post {
     uAmt: { value: 0.5 },
     uGrain: { value: 1 },
     uGlitch: { value: 0 },
-    uVignette: { value: 0.55 },
+    uVignette: { value: 0.25 },
+    uSharpen: { value: 0.5 },
+    uFxaa: { value: 1 },
     uHaze: { value: 0 },
   });
   private prevVP = new THREE.Matrix4();
@@ -208,6 +277,8 @@ export class Post {
         uPrevViewProj: { value: new THREE.Matrix4() },
         uBlur: { value: 0.5 },
         uBloom: { value: 0.1 },
+        tAO: { value: null },
+        uAO: { value: 0 },
         uExposure: { value: 1 },
         uTint: { value: new THREE.Vector3(1, 1, 1) },
         uSat: { value: 1 },
@@ -233,7 +304,11 @@ export class Post {
     for (const r of [...this.bloomRTs, ...this.upRTs]) r.dispose();
     const depth = new THREE.DepthTexture(sw, sh);
     depth.type = THREE.UnsignedIntType;
-    this.sceneRT = new THREE.WebGLRenderTarget(sw, sh, { type: THREE.HalfFloatType, depthTexture: depth, depthBuffer: true });
+    this.sceneRT = new THREE.WebGLRenderTarget(sw, sh, { type: THREE.HalfFloatType, depthTexture: depth, depthBuffer: true, samples: this.s.msaa });
+    this.aoRT?.dispose();
+    this.aoBlurRT?.dispose();
+    this.aoRT = new THREE.WebGLRenderTarget(Math.max(1, sw >> 1), Math.max(1, sh >> 1), { type: THREE.UnsignedByteType, depthBuffer: false });
+    this.aoBlurRT = new THREE.WebGLRenderTarget(Math.max(1, sw >> 1), Math.max(1, sh >> 1), { type: THREE.UnsignedByteType, depthBuffer: false });
     this.sceneRT.texture.colorSpace = THREE.LinearSRGBColorSpace;
     this.ldrRT = new THREE.WebGLRenderTarget(sw, sh, { type: THREE.UnsignedByteType, depthBuffer: false });
     this.ldrRT.texture.minFilter = THREE.LinearFilter;
@@ -285,6 +360,21 @@ export class Post {
       prevTex = this.upRTs[i].texture;
     }
 
+    // ambient occlusion (half res + blur)
+    const cu0 = this.composite.uniforms;
+    if (this.s.ssao) {
+      const su = this.ssao.uniforms;
+      su.tDepth.value = this.sceneRT.depthTexture;
+      (su.uProj.value as THREE.Matrix4).copy(camera.projectionMatrix);
+      (su.uInvProj.value as THREE.Matrix4).copy(camera.projectionMatrixInverse);
+      this.pass(this.ssao, this.aoRT);
+      this.aoBlur.uniforms.tSrc.value = this.aoRT.texture;
+      (this.aoBlur.uniforms.uTexel.value as THREE.Vector2).set(1 / this.aoRT.width, 1 / this.aoRT.height);
+      this.pass(this.aoBlur, this.aoBlurRT);
+      cu0.tAO.value = this.aoBlurRT.texture;
+      cu0.uAO.value = 0.85;
+    } else cu0.uAO.value = 0;
+
     // composite
     const vp = this.tmp.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     const cu = this.composite.uniforms;
@@ -303,6 +393,7 @@ export class Post {
     vu.uTime.value = time;
     vu.uAmt.value = this.s.vhs;
     vu.uGrain.value = this.s.grain;
+    vu.uFxaa.value = this.s.msaa > 0 ? 0 : 1;
     this.pass(this.vhs, null);
   }
 
