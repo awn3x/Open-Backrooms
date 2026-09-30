@@ -11,6 +11,9 @@ import type { EntitySnap, Target } from '../entities/EntityManager';
 import { settings, profile } from '../core/Settings';
 import { censor, sanitize } from '../ui/profanity';
 import type { Voice } from '../audio/AudioEngine';
+import { OUTFITS } from '../entities/Avatar';
+import { nostr, signText, verifyText } from './Nostr';
+import { lobby, parseRoom, hostTag, type GameMode } from './Lobby';
 
 export const APP_ID = 'open-backrooms-v1';
 export const MAX_PEERS = 8;
@@ -27,29 +30,6 @@ export function detectRegion(): Region {
   if (tz.startsWith('Australia/') || tz.startsWith('Pacific/')) return 'OC';
   if (tz.startsWith('Asia/') || tz.startsWith('Indian/')) return 'AS';
   return 'EU';
-}
-
-export interface BoardPost {
-  id: string;
-  name: string;
-  text: string;
-  t: number;
-  paid: number;
-}
-
-export function loadBoard(): BoardPost[] {
-  try {
-    return JSON.parse(localStorage.getItem('ob.board') || '[]');
-  } catch {
-    return [];
-  }
-}
-function saveBoard(posts: BoardPost[]) {
-  try {
-    localStorage.setItem('ob.board', JSON.stringify(posts.slice(-80)));
-  } catch {
-    /* ignore */
-  }
 }
 
 interface Peer {
@@ -70,6 +50,14 @@ interface Peer {
   talking: boolean;
   stepPhase: number;
   ping: number;
+  chatBudget: number;
+}
+
+/** A host-signed kick: anyone can verify it, nobody but the host can make one. */
+interface Kick {
+  t: string;
+  ts: number;
+  s: string;
 }
 
 export class Net {
@@ -77,16 +65,29 @@ export class Net {
   roomId = '';
   label = '';
   peers = new Map<string, Peer>();
-  board: BoardPost[] = loadBoard();
   onChat?: (name: string, text: string, system?: boolean) => void;
-  onBoard?: () => void;
   onPeers?: () => void;
+  /** we were kicked by the host */
+  onKicked?: () => void;
+  /** the verified host told us the room's rules */
+  onRoomConfig?: (mode: GameMode, level: number) => void;
+  // room / host state
+  isHost = false;
+  hostPeer = '';
+  private hostPub = '';
+  private kicks: Kick[] = [];
+  banned = new Set<string>();
+  mode: GameMode = 'escape';
+  startLevel = 0;
+  locked = false;
+  region: Region = detectRegion();
+  private announceT = 0;
   private sendPose!: (d: ArrayBuffer, o?: { target?: string }) => Promise<void>;
   private sendHello!: (d: Record<string, string | number>, o?: { target?: string }) => Promise<void>;
   private sendEnt!: (d: EntitySnap[]) => Promise<void>;
   private sendChatA!: (d: { n: string; t: string }) => Promise<void>;
-  private sendBoardA!: (d: BoardPost[], o?: { target?: string }) => Promise<void>;
   private sendPickA!: (d: number) => Promise<void>;
+  private sendKickA!: (d: Kick[], o?: { target?: string }) => Promise<void>;
   private poseT = 0;
   private entT = 0;
   private pingT = 0;
@@ -105,29 +106,35 @@ export class Net {
   }
 
   /** Join a room id; resolves with the number of peers seen after a short settle. */
-  async join(roomId: string, label: string, password?: string): Promise<number> {
+  async join(roomId: string, label: string, password?: string, asHost = false): Promise<number> {
     this.leave();
     this.roomId = roomId;
     this.label = label;
+    this.isHost = asHost;
+    this.locked = !!password;
+    this.hostPeer = '';
+    this.hostPub = asHost ? nostr.pubkey : '';
+    this.kicks = [];
+    this.banned.clear();
     const room = joinRoom({ appId: APP_ID, password: password || undefined }, roomId);
     this.room = room;
     const [sendPose, getPose] = act<ArrayBuffer>(room, 'pose');
     const [sendHello, getHello] = act<Record<string, string | number>>(room, 'hello');
     const [sendEnt, getEnt] = act<EntitySnap[]>(room, 'ent');
     const [sendChat, getChat] = act<{ n: string; t: string }>(room, 'chat');
-    const [sendBoard, getBoard] = act<BoardPost[]>(room, 'board');
     const [sendPick, getPick] = act<number>(room, 'pick');
+    const [sendKick, getKick] = act<Kick[]>(room, 'kick');
     this.sendPose = sendPose;
     this.sendHello = sendHello;
     this.sendEnt = sendEnt;
     this.sendChatA = sendChat;
-    this.sendBoardA = sendBoard;
     this.sendPickA = sendPick;
+    this.sendKickA = sendKick;
 
     room.onPeerJoin = (id) => {
-      void this.sendHello(this.hello(), { target: id });
-      void this.sendBoardA(this.board.slice(-40), { target: id });
-      if (this.mic) room.addStream(this.mic, { target: id });
+      void this.hello(id).then((h) => this.sendHello(h, { target: id }));
+      if (this.isHost && this.kicks.length) void this.sendKickA(this.kicks, { target: id });
+      if (this.mic && !this.banned.has(id)) room.addStream(this.mic, { target: id });
     };
     room.onPeerLeave = (id) => {
       const p = this.peers.get(id);
@@ -139,61 +146,85 @@ export class Net {
       this.peers.delete(id);
       this.onPeers?.();
     };
-    getHello((d, { peerId }) => {
+    getHello(async (d, { peerId }) => {
+      if (this.banned.has(peerId) || !d || typeof d !== 'object') return;
       let p = this.peers.get(peerId);
-      const name = sanitize(String(d.name ?? 'Wanderer'), 24);
+      const name = censor(sanitize(String(d.name ?? 'Wanderer'), 24)) || 'Wanderer';
+      const outfit = String(d.outfit) in OUTFITS ? String(d.outfit) : 'hoodie_olive';
+      const level = clampInt(d.level, 0, 2);
       if (!p) {
-        const av = new Avatar(name, true, String(d.outfit ?? 'hoodie_olive'));
+        if (this.peers.size >= MAX_PEERS) return;
+        const av = new Avatar(name, true, outfit);
         this.root.add(av.root);
-        p = { id: peerId, name, outfit: String(d.outfit), level: Number(d.level) || 0, avatar: av, pos: new THREE.Vector3(), target: new THREE.Vector3(), yaw: 0, speed: 0, crouch: false, flash: false, alive: true, lastSeen: performance.now(), talking: false, stepPhase: 0, ping: 0 };
+        p = { id: peerId, name, outfit, level, avatar: av, pos: new THREE.Vector3(), target: new THREE.Vector3(), yaw: 0, speed: 0, crouch: false, flash: false, alive: true, lastSeen: performance.now(), talking: false, stepPhase: 0, ping: 0, chatBudget: 5 };
         this.peers.set(peerId, p);
         this.onChat?.('', `${name} joined.`, true);
-        void this.sendHello(this.hello(), { target: peerId });
+        void this.hello(peerId).then((h) => this.sendHello(h, { target: peerId }));
       }
       p.name = name;
-      p.level = Number(d.level) || 0;
+      p.level = level;
+      // host proof: the room id carries the host's key prefix; the host signs a statement bound to its peer id
+      const room = parseRoom(this.roomId);
+      if (room && !this.isHost && typeof d.pk === 'string' && hostTag(d.pk) === room.host && (await verifyText(`host:${this.roomId}:${peerId}`, d.hs, d.pk))) {
+        const first = !this.hostPeer;
+        this.hostPeer = peerId;
+        this.hostPub = d.pk;
+        if (first) this.onRoomConfig?.(d.mode === 'endless' ? 'endless' : 'escape', clampInt(d.sl, 0, 2));
+      }
       this.onPeers?.();
     });
     getPose((buf, { peerId }) => {
       const p = this.peers.get(peerId);
-      if (!p || !(buf instanceof ArrayBuffer) || buf.byteLength < 28) return;
+      if (!p || this.banned.has(peerId) || !(buf instanceof ArrayBuffer) || buf.byteLength < 28 || buf.byteLength > 64) return;
       const f = new Float32Array(buf);
-      p.target.set(f[0], f[6], f[1]);
+      if (![f[0], f[1], f[2], f[3], f[5]].every(Number.isFinite) || Math.abs(f[0]) > 1e5 || Math.abs(f[1]) > 1e5) return;
+      const y = f.length > 6 && Number.isFinite(f[6]) ? Math.max(-2, Math.min(6, f[6])) : 0;
+      p.target.set(f[0], y, f[1]);
       p.yaw = f[2];
-      p.speed = f[3];
+      p.speed = Math.max(0, Math.min(8, f[3]));
       const flags = f[4] | 0;
       p.crouch = !!(flags & 1);
       p.flash = !!(flags & 2);
       p.alive = !!(flags & 4);
       p.talking = !!(flags & 8);
-      p.level = f[5] | 0;
+      p.level = clampInt(f[5], 0, 2);
       p.lastSeen = performance.now();
     });
     getEnt((snaps, { peerId }) => {
-      if (this.authorityId() === peerId) void this.game.entities.applySnapshot(snaps);
+      if (this.authorityId() === peerId && !this.banned.has(peerId)) void this.game.entities.applySnapshot(snaps);
     });
     getChat((d, { peerId }) => {
       const p = this.peers.get(peerId);
-      if (!settings.chat) return;
+      if (!p || this.banned.has(peerId) || !settings.chat || !d) return;
+      // rate limit: 5 messages, refilling one every 2 s
+      if (p.chatBudget < 1) return;
+      p.chatBudget -= 1;
       const text = sanitize(String(d.t ?? ''), 200);
-      this.onChat?.(p?.name ?? 'someone', settings.profanityFilter ? censor(text) : text);
+      if (!text) return;
+      this.onChat?.(p.name, settings.profanityFilter ? censor(text) : text);
     });
-    getBoard((posts) => {
-      if (!Array.isArray(posts)) return;
-      let changed = false;
-      for (const bp of posts.slice(-80)) {
-        if (!bp || typeof bp.id !== 'string' || this.board.some((b) => b.id === bp.id)) continue;
-        this.board.push({ id: bp.id.slice(0, 40), name: sanitize(String(bp.name), 24), text: censor(sanitize(String(bp.text), 160)), t: Number(bp.t) || Date.now(), paid: Number(bp.paid) || 0 });
-        changed = true;
-      }
-      if (changed) {
-        this.board.sort((a, b) => a.t - b.t);
-        saveBoard(this.board);
-        this.onBoard?.();
+    getPick((id, { peerId }) => {
+      // only accept a pickup from someone standing next to that item on our level
+      const p = this.peers.get(peerId);
+      const it = this.game.objects?.interactables.find((x) => x.kind === 'pickup' && x.data === Number(id));
+      if (!p || this.banned.has(peerId) || !it || p.level !== this.game.level || Math.hypot(it.pos.x - p.pos.x, it.pos.z - p.pos.z) > 3) return;
+      this.game.objects?.consume(Number(id));
+    });
+    getKick(async (list, { peerId }) => {
+      if (!Array.isArray(list) || !this.hostPub || peerId !== this.hostPeer) return;
+      for (const k of list.slice(0, 64)) {
+        if (!k || typeof k.t !== 'string' || !Number.isFinite(k.ts)) continue;
+        if (!(await verifyText(`kick:${this.roomId}:${k.t}:${k.ts}`, k.s, this.hostPub))) continue;
+        if (k.t === selfId) {
+          this.onKicked?.();
+          return;
+        }
+        this.ban(k.t);
       }
     });
-    getPick((id) => this.game.objects?.consume(Number(id)));
-    room.onPeerStream = (stream, peerId) => this.attachVoice(peerId, stream);
+    room.onPeerStream = (stream, peerId) => {
+      if (!this.banned.has(peerId)) this.attachVoice(peerId, stream);
+    };
 
     await new Promise((r) => setTimeout(r, 3500));
     return this.peers.size;
@@ -218,10 +249,43 @@ export class Net {
     this.peers.clear();
     void this.room?.leave();
     this.room = null;
+    this.isHost = false;
+    this.hostPeer = '';
+    this.hostPub = '';
   }
 
-  private hello() {
-    return { name: settings.name, outfit: profile.outfit, level: this.game.level, v: 1 };
+  /** Host only: remove a player. Everyone verifies the signed kick and stops listening to them. */
+  async kick(peerId: string) {
+    if (!this.isHost || !this.peers.has(peerId)) return;
+    const ts = Date.now();
+    const k: Kick = { t: peerId, ts, s: await signText(`kick:${this.roomId}:${peerId}:${ts}`) };
+    this.kicks.push(k);
+    void this.sendKickA([k]);
+    const name = this.peers.get(peerId)?.name ?? 'Player';
+    this.ban(peerId);
+    this.onChat?.('', `${name} was removed by the host.`, true);
+  }
+
+  private ban(peerId: string) {
+    this.banned.add(peerId);
+    const p = this.peers.get(peerId);
+    if (p) {
+      p.avatar.dispose();
+      p.voice?.el.remove();
+      this.peers.delete(peerId);
+    }
+    this.onPeers?.();
+  }
+
+  private async hello(to?: string): Promise<Record<string, string | number>> {
+    const h: Record<string, string | number> = { name: settings.name, outfit: profile.outfit, level: this.game.level, v: 2 };
+    if (this.isHost && to) {
+      h.pk = nostr.pubkey;
+      h.hs = await signText(`host:${this.roomId}:${selfId}`);
+      h.mode = this.mode;
+      h.sl = this.startLevel;
+    }
+    return h;
   }
 
   peerNames() {
@@ -239,7 +303,8 @@ export class Net {
   }
 
   onLevelChanged(_level: number) {
-    void this.sendHello?.(this.hello());
+    if (!this.sendHello) return;
+    for (const id of this.peers.keys()) void this.hello(id).then((h) => this.sendHello(h, { target: id }));
   }
 
   sendStep(_loud: number) {
@@ -255,14 +320,6 @@ export class Net {
     if (!text || !this.room) return;
     void this.sendChatA({ n: settings.name, t: text });
     this.onChat?.(settings.name, settings.profanityFilter ? censor(text) : text);
-  }
-
-  postBoard(text: string, paid: number) {
-    const post: BoardPost = { id: selfId + ':' + Date.now().toString(36), name: settings.name, text: censor(sanitize(text, 160)), t: Date.now(), paid };
-    this.board.push(post);
-    saveBoard(this.board);
-    void this.sendBoardA?.([post]);
-    this.onBoard?.();
   }
 
   // ------------------------------------------------------------------ voice
@@ -331,6 +388,22 @@ export class Net {
     // entity authority
     const auth = this.authorityId() === selfId;
     g.entities.authority = auth;
+    // server browser: hosts (or the authority of a public world) keep the listing alive
+    this.announceT -= dt;
+    const pub = /^public:/.test(this.roomId);
+    if (this.announceT <= 0 && (this.isHost || (pub && auth))) {
+      this.announceT = 15;
+      const m = /^public:(\w\w):(\d+)$/.exec(this.roomId);
+      lobby.announce({
+        id: this.roomId,
+        name: pub && m ? `${REGION_NAMES[m[1] as Region]} #${m[2]}` : parseRoom(this.roomId)?.name ?? this.label,
+        region: pub && m ? (m[1] as Region) : this.region,
+        mode: this.mode,
+        level: g.level,
+        players: this.peers.size + 1,
+        locked: this.locked,
+      });
+    }
     if (auth) {
       this.entT -= dt;
       if (this.entT <= 0) {
@@ -343,6 +416,7 @@ export class Net {
     if (doPing) this.pingT = 3;
     const now = performance.now();
     for (const p of this.peers.values()) {
+      p.chatBudget = Math.min(5, p.chatBudget + dt / 2);
       if (doPing) void this.room.ping(p.id).then((ms) => (p.ping = ms)).catch(() => {});
       const same = p.level === g.level;
       p.avatar.root.visible = same && p.alive && now - p.lastSeen < 5000;
@@ -372,6 +446,11 @@ export class Net {
       }
     }
   }
+}
+
+function clampInt(v: unknown, lo: number, hi: number) {
+  const n = Math.floor(Number(v));
+  return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : lo;
 }
 
 function act<T>(room: Room, name: string): [(d: T, o?: { target?: string }) => Promise<void>, (cb: (d: T, ctx: { peerId: string }) => void) => void] {

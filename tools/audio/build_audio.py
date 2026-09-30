@@ -780,53 +780,52 @@ def reverse_swell(src, d):
     return wet * k ** 2.2
 
 
-def scream(seed, style=0, d=1.8):
-    """Creature scream: LF-ish glottal source with jitter/shimmer, subharmonic roar, breath noise,
-    moving throat/mouth formants and an ingressive gasp before it."""
+SCREAM_DEFAULT = dict(f0a=450, f0b=950, rise=0.15, fall=0.3, vib_r=6.0, vib_d=0.05, jit=0.04, fjit=0.02, sub=0.3,
+                      am_f=70.0, am_d=0.5, chaos=3.0, breath=0.5, fs=1.0, q=2.5, drive=3.0, vowel=0.5)
+
+
+def scream(seed, style=0, d=1.8, **kw):
+    """Creature/human scream from a parametric voice model: LF-ish glottal pulses with vibrato, jitter,
+    register jumps, period doubling and fast amplitude roughness; aspiration noise; moving formants.
+    `style` picks a tuned preset (SCREAM_PRESETS); keyword args override it. Starts with an ingressive gasp."""
+    P = dict(SCREAM_DEFAULT)
+    P.update(SCREAM_PRESETS[style % len(SCREAM_PRESETS)] if SCREAM_PRESETS else {})
+    P.update(kw)
     r = np.random.default_rng(seed)
     n = int(d * SR)
     k = np.linspace(0, 1, n)
-    wob = lp(r.standard_normal(n), 9) * 30
-    if style == 0:   # rising shriek that cracks at the end
-        f0 = 420 + 620 * np.clip(k / 0.18, 0, 1) - 380 * np.clip((k - 0.75) / 0.25, 0, 1)
-        F = ([850, 1350, 2900, 3900], [1000, 1900, 3200, 4200]); sub, drive, br = 0.25, 2.8, 0.35
-    elif style == 1:  # broken wail: pitch sobbing, voice breaking in and out
-        f0 = 560 + 140 * np.sin(2 * np.pi * 2.6 * k * d) + 200 * k
-        F = ([750, 1200, 2700, 3700], [900, 1500, 3000, 4000]); sub, drive, br = 0.15, 2.2, 0.45
-    elif style == 2:  # guttural roar
-        f0 = 120 + 60 * np.clip(k / 0.2, 0, 1) - 30 * k
-        F = ([520, 950, 2400, 3300], [650, 1100, 2600, 3500]); sub, drive, br = 0.7, 4.5, 0.3
-    else:             # clicking fry accelerating into a shriek
-        f0 = 35 + 900 * np.clip((k - 0.25) / 0.2, 0, 1) ** 1.5
-        F = ([800, 1300, 2800, 3800], [950, 1700, 3100, 4100]); sub, drive, br = 0.3, 3.0, 0.35
-    f0 = f0 * (1 + 0.06 * np.sin(2 * np.pi * r.uniform(5, 8) * k * d + r.uniform(0, 6)) * np.clip(k / 0.2, 0, 1))
-    f0 = f0 * (1 + 0.035 * lp(r.standard_normal(n), 25) * 14) * (1 + 0.02 * lp(r.standard_normal(n), 120) * 25)
-    brk = np.ones(n)
-    for _ in range(r.integers(2, 5)):  # yodel-like register breaks
-        a = r.uniform(0.2, 0.9)
-        brk *= 1 + r.choice([-0.25, 0.3]) * ((k > a) & (k < a + r.uniform(0.04, 0.12)))
-    f0 = np.maximum(20, lp(f0 * brk, 60) + wob)
+    tt = np.arange(n) / SR
+    # pitch contour: attack glide up, hold, sag at the end
+    f0 = P["f0a"] + (P["f0b"] - P["f0a"]) * np.clip(tt / max(P["rise"], 0.01), 0, 1) ** 0.7
+    f0 *= 1 - 0.35 * np.clip((tt - (d - P["fall"])) / max(P["fall"], 0.01), 0, 1)
+    f0 *= 1 + P["vib_d"] * np.sin(2 * np.pi * P["vib_r"] * tt + r.uniform(0, 6)) * np.clip(tt / 0.25, 0, 1)
+    f0 *= 1 + P["jit"] * lp(r.standard_normal(n), 12) * 14
+    f0 *= 1 + P["fjit"] * lp(r.standard_normal(n), 150) * 20
+    jumps = np.zeros(n)
+    for _ in range(r.poisson(P["chaos"] * d)):
+        a = r.uniform(0.05, 0.95)
+        jumps += r.choice([-1, 1]) * r.uniform(0.1, 0.35) * ((k > a) & (k < a + r.uniform(0.03, 0.15)))
+    f0 = np.maximum(30, lp(f0 * (1 + jumps), 40))
     ph = np.cumsum(f0) / SR
     p = ph % 1.0
     glot = np.where(p < 0.6, 0.5 * (1 - np.cos(np.pi * p / 0.6)), np.cos(0.5 * np.pi * (p - 0.6) / 0.25).clip(0))
     src = np.diff(glot, prepend=0) * SR / 800
-    src *= 1 + sub * np.sign(np.sin(np.pi * ph))            # period doubling
-    src *= 1 + 0.25 * lp(r.standard_normal(n), 60) * 6       # shimmer
-    src *= 1 + 0.35 * np.sin(2 * np.pi * r.uniform(35, 60) * np.arange(n) / SR) * (style == 2)  # growl flutter
-    if style == 1:
-        src *= np.clip(0.4 + np.sin(2 * np.pi * 3.3 * k * d + 1) * 2, 0, 1)
-    breath = bp(r.standard_normal(n), 900, 7000) * br * 6
-    ex = src + breath * (0.4 + 0.6 * np.abs(np.sin(np.pi * ph * 0.5)))
+    src *= 1 + P["sub"] * np.sign(np.sin(np.pi * ph))
+    src *= 1 + 0.2 * lp(r.standard_normal(n), 60) * 6
+    am = 1 - P["am_d"] * (0.5 + 0.5 * np.sin(2 * np.pi * np.cumsum(P["am_f"] * (1 + 0.2 * lp(r.standard_normal(n), 8) * 8)) / SR))
+    src *= am
+    breath = bp(r.standard_normal(n), 700, 8000) * P["breath"] * 4 * am
+    ex = src + breath
+    v = P["vowel"]  # 0 = "ee", 1 = "ah"
+    F1 = (380 + 620 * v) * P["fs"]; F2 = (2200 - 1000 * v) * P["fs"]; F3 = 2900 * P["fs"]; F4 = 3900 * P["fs"]
     y = np.zeros(n)
-    br *= 1.6
-    breath = breath * 1.6
-    ex = src + breath * (0.4 + 0.6 * np.abs(np.sin(np.pi * ph * 0.5)))
-    for (a, b), g, q in zip(zip(*F), (1.0, 0.8, 0.7, 0.45), (2.2, 2.8, 3.5, 4.5)):
-        y += peak(ex, a, q) * g * (1 - k) + peak(ex, b, q) * g * k
-    y += hp(ex, 3500) * 0.15
-    y = np.tanh(y / (np.abs(y).max() + 1e-9) * drive)
-    y *= env_ar(n, 0.02, 0.35 if style != 0 else 0.5)
-    # ingressive gasp
+    for f, g, q in ((F1 * (1 - 0.15 * k), 1.0, 1.0), (F2 * (1 + 0.1 * k), 0.8, 1.2), (F3, 0.6, 1.6), (F4, 0.4, 2.0)):
+        fm = float(np.mean(f)) if np.ndim(f) else f
+        y += peak(ex, min(fm, SR / 2 - 500), P["q"] * q) * g
+    y += hp(ex, 4000) * 0.12
+    y = np.tanh(y / (np.abs(y).max() + 1e-9) * P["drive"])
+    y *= env_ar(n, 0.03, min(0.5, d * 0.3))
+    y *= 1 + 0.25 * lp(r.standard_normal(n), 6) * 6
     gl = 0.28
     gasp = bp(r.standard_normal(int(gl * SR)), 700, 4500) * np.linspace(0, 1, int(gl * SR)) ** 2
     gasp = peak(gasp, r.uniform(1100, 1500), 3) + gasp * 0.4
@@ -834,6 +833,13 @@ def scream(seed, style=0, d=1.8):
     place(out, gasp * 0.35, 0.0)
     place(out, y, gl + 0.03)
     return out
+
+
+SCREAM_PRESETS = [  # tuned with tools/audio/tune.py against YAMNet: 'Screaming' 0.54-0.80, no siren/whistle/music
+    {"f0a": 683, "f0b": 1349, "rise": 0.166, "fall": 0.234, "vib_r": 3.79, "vib_d": 0.047, "jit": 0.003, "fjit": 0.016, "sub": 0.43, "am_f": 97.5, "am_d": 0.02, "chaos": 4.75, "breath": 1.3, "fs": 0.86, "q": 4.75, "drive": 4.98, "vowel": 0.2},
+    {"f0a": 697, "f0b": 1309, "rise": 0.166, "fall": 0.244, "vib_r": 3.45, "vib_d": 0.045, "jit": 0.012, "fjit": 0.017, "sub": 0.43, "am_f": 93.8, "am_d": 0.106, "chaos": 4.75, "breath": 1.3, "fs": 0.84, "q": 4.59, "drive": 4.98, "vowel": 0.21},
+    {"f0a": 660, "f0b": 1303, "rise": 0.144, "fall": 0.27, "vib_r": 4.75, "vib_d": 0.049, "jit": 0.008, "fjit": 0.016, "sub": 0.46, "am_f": 98.1, "am_d": 0.053, "chaos": 5.56, "breath": 1.5, "fs": 0.87, "q": 4.46, "drive": 4.97, "vowel": 0.19},
+]
 
 
 def _master(x, drive=1.4, peak_db=-0.5):
@@ -844,18 +850,55 @@ def _master(x, drive=1.4, peak_db=-0.5):
 STING_PRE = 0.5  # seconds of lead-in before the hit in every sting_* file (the game schedules to it)
 
 
-def sting_crawler(i):
-    r = np.random.default_rng(300 + i)
+STING_DEFAULT = dict(hit=1.0, size=1.0, metal=0.5, lo=55.0, lo_n=3, lo_g=0.8, lo_p=0.1, hi=800.0, hi_n=4, hi_step=1.0,
+                     hi_g=0.55, hi_p=0.5, gliss=-0.08, trem=0.0, hi_fade=0.6, attack=0.005, swell=1.0, drive=1.25)
+
+
+def sting_param(seed, crescendo=False, **kw):
+    """Parametric horror stinger: reverse swell -> film hit + low and high dissonant string clusters."""
+    P = dict(STING_DEFAULT)
+    P.update(kw)
+    r = np.random.default_rng(seed)
+    semis = lambda base, n, step: [base * 2 ** (step * j / 12) * r.uniform(0.995, 1.005) for j in range(int(round(n)))]
+    if crescendo:
+        d = 4.2
+        x = np.zeros(int(d * SR))
+        hi = strings(d, semis(P["hi"], P["hi_n"], P["hi_step"]), 2.8, 0.1, 1.0, 0.6, P["hi_p"], 6, gliss=P["gliss"], tremolo=P["trem"], seed=seed + 1)
+        lo = strings(d, semis(P["lo"], P["lo_n"], 6), 3.0, 0.1, 1.0, 0.5, P["lo_p"], 4, seed=seed + 2)
+        sub = np.sin(2 * np.pi * np.cumsum(np.linspace(31, 27, len(x))) / SR) * np.linspace(0, 1, len(x)) ** 2
+        x += hi * P["hi_g"] + lo * P["lo_g"] + sub * 0.5
+        place(x, impact(seed + 3, size=0.6, metal=P["metal"] * 0.4) * 0.5 * P["hit"], d - 0.7)
+        return _master(x, P["drive"], -1.5)
     d = STING_PRE + 3.2
     x = np.zeros(int(d * SR))
-    hit = impact(310 + i, size=1.0 + 0.15 * i, metal=0.7)
-    low = strings(2.8, [r.choice([55, 58.3, 61.7]) * m for m in (1, 1.06, 1.5)], 0.008, 0.25, 0.3, 0.8, 0.1, 5, seed=320 + i, fade=0.9)
-    high = strings(2.6, [r.uniform(700, 900) * m for m in (1, 1.059, 1.122, 1.414)], 0.005, 0.15, 0.25, 0.8, 0.5, 5, gliss=-0.08, seed=330 + i, fade=0.5)
-    stab = mix(hit, low * 0.8, high * 0.55)
-    place(x, reverse_swell(stab, STING_PRE) * 1.0, 0.0)
+    hit = impact(seed + 3, size=P["size"], metal=P["metal"]) * P["hit"]
+    lo = strings(2.8, semis(P["lo"], P["lo_n"], 1), P["attack"] + 0.003, 0.25, 0.3, 0.8, P["lo_p"], 5, seed=seed + 1, fade=0.9)
+    hi = strings(2.6, semis(P["hi"], P["hi_n"], P["hi_step"]), P["attack"], 0.15, 0.25, 0.8, P["hi_p"], 5, gliss=P["gliss"], tremolo=P["trem"], seed=seed + 2, fade=P["hi_fade"])
+    stab = mix(hit, lo * P["lo_g"], hi * P["hi_g"])
+    place(x, reverse_swell(stab, STING_PRE) * P["swell"], 0.0)
     place(x, stab, STING_PRE)
-    return _master(x, 1.25)
+    return _master(x, P["drive"])
 
+
+STING_PRESETS = {  # tuned with tools/audio/tune.py against YAMNet ('Music' 0.9+, no bell/chime/siren readings)
+    "crawler": [
+        {"hit": 1.077, "size": 0.725, "metal": 0.124, "lo": 87.812, "lo_n": 2.526, "lo_g": 1.166, "lo_p": 0.375, "hi": 1362.444, "hi_n": 2.127, "hi_step": 1.783, "hi_g": 1.076, "hi_p": 0.238, "gliss": 0.065, "trem": 0.0, "hi_fade": 1.276, "attack": 0.026, "swell": 1.217, "drive": 1.816},
+        {"hit": 0.815, "size": 1.534, "metal": 0.059, "lo": 58.464, "lo_n": 2.0, "lo_g": 0.371, "lo_p": 0.144, "hi": 1544.79, "hi_n": 2.38, "hi_step": 1.354, "hi_g": 0.78, "hi_p": 0.885, "gliss": 0.15, "trem": 10.642, "hi_fade": 0.571, "attack": 0.022, "swell": 1.5, "drive": 1.065},
+        {"hit": 1.097, "size": 0.704, "metal": 0.164, "lo": 87.812, "lo_n": 2.56, "lo_g": 1.043, "lo_p": 0.375, "hi": 1362.444, "hi_n": 2.264, "hi_step": 1.904, "hi_g": 1.076, "hi_p": 0.238, "gliss": 0.065, "trem": 0.084, "hi_fade": 1.338, "attack": 0.025, "swell": 1.189, "drive": 1.795},
+    ],
+    "smiler": [
+        {"hit": 0.815, "size": 1.534, "metal": 0.35, "lo": 58.464, "lo_n": 2.0, "lo_g": 0.371, "lo_p": 0.144, "hi": 1700.0, "hi_n": 2.38, "hi_step": 1.354, "hi_g": 0.78, "hi_p": 0.885, "gliss": 0.15, "trem": 10.642, "hi_fade": 0.571, "attack": 0.022, "swell": 1.5, "drive": 1.065},
+        {"hit": 0.766, "size": 1.534, "metal": 0.3, "lo": 58.464, "lo_n": 2.0, "lo_g": 0.405, "lo_p": 0.128, "hi": 1498.456, "hi_n": 2.38, "hi_step": 1.351, "hi_g": 0.794, "hi_p": 0.841, "gliss": 0.15, "trem": 10.361, "hi_fade": 0.556, "attack": 0.022, "swell": 1.5, "drive": 1.009},
+    ],
+    "mimic": [
+        {"hit": 0.766, "size": 1.534, "metal": 0.054, "lo": 58.464, "lo_n": 2.0, "lo_g": 0.405, "lo_p": 0.128, "hi": 1498.456, "hi_n": 2.38, "hi_step": 1.351, "hi_g": 0.794, "hi_p": 0.841, "gliss": 0.15, "trem": 10.361, "hi_fade": 0.556, "attack": 0.022, "swell": 1.5, "drive": 1.009},
+        {"hit": 1.077, "size": 0.725, "metal": 0.124, "lo": 62.0, "lo_n": 2.526, "lo_g": 1.166, "lo_p": 0.375, "hi": 900.0, "hi_n": 2.127, "hi_step": 1.783, "hi_g": 1.076, "hi_p": 0.238, "gliss": 0.065, "trem": 0.0, "hi_fade": 1.276, "attack": 0.026, "swell": 1.217, "drive": 1.816},
+    ],
+}
+
+
+def sting_crawler(i):
+    return sting_param(300 + i, **STING_PRESETS["crawler"][i % len(STING_PRESETS["crawler"])])
 
 def sting_watcher(i):
     r = np.random.default_rng(400 + i)
@@ -871,42 +914,26 @@ def sting_watcher(i):
 
 
 def sting_smiler(i):
-    r = np.random.default_rng(500 + i)
-    d = STING_PRE + 3.0
-    x = np.zeros(int(d * SR))
-    inhale = hp(r.standard_normal(int(STING_PRE * SR)), 1800) * np.linspace(0, 1, int(STING_PRE * SR)) ** 3
-    place(x, inhale * 0.6, 0.0)
-    hit = impact(510 + i, size=0.8, metal=1.4)
-    scr = strings(2.6, [r.uniform(1300, 1600) * m for m in (1, 1.059, 1.414)], 0.004, 0.15, 0.3, 0.8, 0.7, 5, gliss=-0.12, seed=520 + i, fade=0.6)
-    place(x, mix(hit, scr * 0.6), STING_PRE)
-    return _master(lp(x, 9000), 1.25)
-
+    return sting_param(500 + i, **STING_PRESETS["smiler"][i % len(STING_PRESETS["smiler"])])
 
 def sting_mimic(i):
-    r = np.random.default_rng(600 + i)
-    d = STING_PRE + 3.0
-    x = np.zeros(int(d * SR))
-    b = breath_one("in", r, mouth=True, strength=1.0, voice=0.5)
-    b = signal.resample(b, int(len(b) / 0.62))[::-1]
-    b = b[-int(STING_PRE * SR):] if len(b) > STING_PRE * SR else b
-    place(x, norm(b, -6), STING_PRE - len(b) / SR)
-    hit = impact(610 + i, size=0.9, metal=0.5)
-    cl = strings(2.6, [r.uniform(180, 220) * m for m in (1, 1.189, 1.414, 1.498)], 0.006, 0.3, 0.3, 0.9, 0.3, 5, seed=620 + i, fade=0.8)
-    place(x, mix(hit, cl * 0.7), STING_PRE)
-    return _master(x, 1.25)
+    return sting_param(600 + i, **STING_PRESETS["mimic"][i % len(STING_PRESETS["mimic"])])
+
+JUMPSCARE_SEEDS = [1001, 1107, 1201, 1308]  # picked with tools/audio/tune.py (best YAMNet "Screaming" per take)
 
 
-def jumpscare(i):
+def jumpscare(i, seed=None):
     """The catch: a close, dry scream + huge hit + shrieking strings, then a hard cut to silence."""
-    r = np.random.default_rng(700 + i)
+    seed = JUMPSCARE_SEEDS[i] if seed is None else seed
+    r = np.random.default_rng(seed)
     d = 3.2
     cut = 1.25
     x = np.zeros(int(d * SR))
-    sc = scream(710 + i, style=[0, 2, 3, 0][i], d=1.4)
+    sc = scream(seed + 10, style=i, d=1.4)
     sc = sc[int(0.28 * SR):]  # no gasp: it's in your face
-    hit = impact(720 + i, size=1.3, metal=1.0)
-    shriek = strings(cut, [r.uniform(1100, 1400) * m for m in (1, 1.059, 1.122, 1.414)], 0.003, 0.3, 0.8, 0.02, 0.6, 6, gliss=0.15, seed=730 + i)
-    low = strings(cut, [r.choice([41.2, 43.7]) * m for m in (1, 1.06)], 0.003, 0.2, 0.6, 0.02, 0.2, 4, seed=740 + i)
+    hit = impact(seed + 20, size=1.3, metal=1.0)
+    shriek = strings(cut, [r.uniform(1100, 1400) * m for m in (1, 1.059, 1.122, 1.414)], 0.003, 0.3, 0.8, 0.02, 0.6, 6, gliss=0.15, seed=seed + 30)
+    low = strings(cut, [r.choice([41.2, 43.7]) * m for m in (1, 1.06)], 0.003, 0.2, 0.6, 0.02, 0.2, 4, seed=seed + 40)
     body = mix(hit * 1.1, sc * 1.2, shriek * 0.6, low * 0.6)
     body = _master(body, 2.2, -0.3)
     nc = int(cut * SR)
