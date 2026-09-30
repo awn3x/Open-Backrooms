@@ -16,7 +16,7 @@ await page.goto('http://localhost:4183/');
 await page.waitForSelector('#boot .start:not(.hidden)', { timeout: 120000 });
 await page.click('#boot .start');
 await page.waitForSelector('#menu', { timeout: 120000 });
-await page.click('.mbtn[data-a="ai"]');
+await page.click('.mbtn[data-a="ai"]'); await page.waitForTimeout(500); await page.click('.go');
 await page.waitForTimeout(9000);
 await page.screenshot({ path: path.join(out, 'ai_start.png') });
 // walk forward for a few seconds
