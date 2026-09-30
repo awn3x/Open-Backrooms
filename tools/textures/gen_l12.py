@@ -41,7 +41,7 @@ def concrete_wall():
     ptone = 0.96 + 0.02 * pid
     base = srgb([0.56, 0.55, 0.52])
     col = np.ones((N, N, 3)) * base
-    col *= (0.85 + 0.2 * big[..., None]) * (0.95 + 0.08 * mid[..., None]) * ptone[..., None]
+    col *= (0.9 + 0.12 * big[..., None]) * (0.96 + 0.06 * mid[..., None]) * ptone[..., None]
     col = lerp(col, col * srgb([0.8, 0.78, 0.72]), smoothstep(0.55, 0.9, streak) * 0.5)
     col = lerp(col, srgb([0.78, 0.78, 0.74]), smoothstep(0.7, 0.95, big) * 0.2)  # efflorescence
     col *= (1 - 0.4 * seam[..., None]) * (1 - 0.5 * pits[..., None])
@@ -72,8 +72,8 @@ def concrete_floor():
     col = np.ones((N, N, 3)) * base
     col *= (0.82 + 0.25 * big[..., None]) * (0.96 + 0.06 * mid[..., None]) * (0.97 + 0.04 * fine[..., None])
     col *= (0.97 + 0.05 * trowel[..., None])
-    col = lerp(col, col * srgb([0.75, 0.72, 0.66]), stains * 0.6)
-    col = lerp(col, col * 0.55, oil * 0.6)
+    col = lerp(col, col * srgb([0.85, 0.83, 0.78]), stains * 0.35)
+    col = lerp(col, col * 0.8, oil * 0.35)
     col *= (1 - 0.55 * np.maximum(crack, joint)[..., None])
     h = 0.5 + 0.05 * mid + 0.03 * fine - 0.4 * crack - 0.5 * joint
     rough = np.clip(0.62 + 0.18 * mid - 0.15 * trowel + 0.1 * stains - 0.25 * oil, 0.2, 1)
@@ -86,15 +86,16 @@ def pipe_metal():
     u, v = grid(N)
     big = fbm(N, 3, 6)
     mid = fbm(N, 20, 5)
-    chips = smoothstep(0.62, 0.66, fbm(N, 8, 6))
-    rust_bloom = smoothstep(0.5, 0.75, blur(chips, 8) * 2 + big * 0.5)
+    chips = smoothstep(0.72, 0.76, fbm(N, 48, 5)) * smoothstep(0.45, 0.7, big)
+    rust_bloom = np.clip(blur(chips, 3) * 1.5, 0, 1) * 0.8
     streak = smoothstep(0.5, 0.9, fft_noise(N, 4, 50, 0.8, aniso=(0.05, 1.0)))
     paint = srgb([0.80, 0.80, 0.78])  # neutral, tinted by the material colour
     rust = srgb([0.36, 0.19, 0.09])
     steel = srgb([0.42, 0.40, 0.38])
     col = np.ones((N, N, 3)) * paint * (0.9 + 0.1 * mid[..., None])
     col = lerp(col, col * srgb([0.75, 0.62, 0.5]), streak * 0.5)
-    col = lerp(col, rust * (0.8 + 0.4 * mid[..., None]), np.clip(rust_bloom * 0.7 + chips, 0, 1))
+    col = lerp(col, rust * (0.8 + 0.4 * mid[..., None]), np.clip(rust_bloom * 0.6 + chips * 0.8, 0, 1))
+    col *= (0.9 + 0.1 * fbm(N, 16, 4)[..., None])  # grime
     exposed = chips * smoothstep(0.4, 0.6, mid)
     col = lerp(col, steel, exposed * 0.6)
     h = 0.6 - 0.25 * chips + 0.08 * mid * rust_bloom
@@ -146,10 +147,10 @@ def grate_floor():
     ay = (fy - fx * alt) * 0.7071
     lozenge = 1 - smoothstep(0.9, 1.1, (ax / 0.34) ** 2 + (ay / 0.08) ** 2)
     wear = fbm(N, 6, 5)
-    rust = smoothstep(0.55, 0.8, fbm(N, 4, 6))
+    rust = smoothstep(0.62, 0.85, fbm(N, 10, 6)) * 0.6
     grime = fbm(N, 30, 4)
     col = np.ones((N, N, 3)) * srgb([0.45, 0.44, 0.42]) * (0.85 + 0.2 * grime[..., None])
-    col = lerp(col, srgb([0.65, 0.64, 0.62]), lozenge * smoothstep(0.4, 0.8, wear) * 0.6)
+    col = lerp(col, srgb([0.62, 0.61, 0.58]), lozenge * (0.35 + 0.5 * smoothstep(0.4, 0.8, wear)))
     col = lerp(col, srgb([0.33, 0.18, 0.09]) * (0.8 + 0.3 * grime[..., None]), rust * 0.85)
     h = 0.4 + 0.5 * lozenge - 0.05 * rust
     rough = np.clip(0.45 + 0.4 * rust + 0.1 * grime - 0.2 * lozenge * wear, 0, 1)

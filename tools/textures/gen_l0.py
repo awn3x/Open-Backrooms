@@ -32,7 +32,7 @@ def wallpaper():
     dx = np.abs(u - cx)
     dy = np.abs(v - cy)
     dia = dx + dy * 0.72
-    r = 0.0105
+    r = 0.0125
     outer = 1 - smoothstep(r - px, r + px, dia)
     inner = 1 - smoothstep(r * 0.55 - px, r * 0.55 + px, dia)
     diamond = np.clip(outer - inner, 0, 1)
@@ -55,13 +55,16 @@ def wallpaper():
     streak = fft_noise(N, 3, 40, 1.0, aniso=(1.0, 0.08))  # vertical roll streaks
     blotch = fbm(N, 2, 4)
 
-    base = srgb([0.80, 0.71, 0.43])
+    base = srgb([0.79, 0.69, 0.38])
     col = np.ones((N, N, 3)) * base
-    col *= (0.965 + 0.05 * grain[..., None] + 0.025 * fibres[..., None])
+    col *= (0.955 + 0.05 * grain[..., None] + 0.025 * fibres[..., None])
     col *= (0.975 + 0.04 * streak[..., None])
     col *= (0.97 + 0.05 * blotch[..., None])
-    inkcol = srgb([0.66, 0.56, 0.30])
-    col = lerp(col, col * (inkcol / base), ink * 0.55)
+    inkcol = srgb([0.60, 0.50, 0.25])
+    col = lerp(col, col * (inkcol / base), ink * 0.85)
+    # faint vertical bands between motif columns (printed stripe)
+    band = 0.5 + 0.5 * np.cos((u / colw) * 2 * np.pi)
+    col *= (0.985 + 0.03 * band[..., None])
 
     # --- seams every 0.5 m (roll width); slightly lifted, darker line + faint glue stain
     sd = np.minimum(np.abs(u - 0.0), np.minimum(np.abs(u - 0.5), np.abs(u - 1.0)))
@@ -90,14 +93,16 @@ def carpet():
     rows = 0.5 + 0.5 * np.sin(np.mgrid[0:N, 0:N][0] / N * np.pi * 2 * 180)  # tufting rows
     h = 0.55 * loops + 0.3 * loops2 + 0.15 * fib + 0.06 * rows
     h = normalize(h)
-    base = srgb([0.63, 0.54, 0.32])
+    base = srgb([0.60, 0.50, 0.28])
     col = np.ones((N, N, 3)) * base
-    col *= (0.72 + 0.42 * h[..., None])
+    col *= (0.66 + 0.5 * h[..., None])
     # individual lighter / darker strands
     strand = fft_noise(N, 200, 800, 0.0)
     col = lerp(col, col * srgb([1.12, 1.08, 0.95]), smoothstep(0.75, 0.95, strand) * 0.6)
     col = lerp(col, col * srgb([0.7, 0.66, 0.6]), smoothstep(0.8, 0.98, 1 - strand) * 0.5)
-    col *= (0.93 + 0.12 * tone[..., None])
+    col *= (0.86 + 0.26 * tone[..., None])
+    blot = smoothstep(0.55, 0.85, fbm(N, 3, 5))
+    col = lerp(col, col * srgb([0.78, 0.72, 0.6]), blot * 0.5)  # old damp blotches
     rough = np.clip(0.9 + 0.08 * (1 - h), 0, 1)
     nrm = height_to_normal(h, 7.0)
     ao = np.clip(ao_from_height(h, 2, 2.2) * (0.75 + 0.25 * h), 0, 1)
@@ -137,10 +142,10 @@ def ceiling_tile(variant, n=1024):
         tide = normalize(tide) * m.clip(0, 1) ** 0.1
         # multiple rings
         rings = 0.5 + 0.5 * np.sin((rad + (blob - 0.5) * 0.35) * [0, 90, 70, 55][variant])
-        stain_col = srgb([0.62, 0.50, 0.30]) if variant < 3 else srgb([0.45, 0.40, 0.30])
-        amt = [0, 0.35, 0.55, 0.8][variant]
+        stain_col = srgb([0.66, 0.58, 0.44]) if variant < 3 else srgb([0.48, 0.44, 0.36])
+        amt = [0, 0.3, 0.45, 0.7][variant]
         col = lerp(col, col * (stain_col / base), m * amt * (0.8 + 0.2 * rings))
-        col = lerp(col, col * srgb([0.55, 0.42, 0.25]), np.clip(tide * 1.6, 0, 1) * amt)
+        col = lerp(col, col * srgb([0.62, 0.52, 0.38]), np.clip(tide * 1.2, 0, 1) * amt)
         if variant == 3:
             mould = smoothstep(0.55, 0.75, fft_noise(n, 30, 120, 0.2)) * m
             col = lerp(col, srgb([0.2, 0.22, 0.16]), mould * 0.6)

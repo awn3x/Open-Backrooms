@@ -11,8 +11,8 @@ export default defineConfig({
     chunkSizeWarningLimit: 2000,
     rolldownOptions: {
       input: {
-        main: resolve(__dirname, 'index.html'),
-        play: resolve(__dirname, 'play/index.html'),
+        main: resolve(import.meta.dirname, 'index.html'),
+        play: resolve(import.meta.dirname, 'play/index.html'),
       },
     },
   },
