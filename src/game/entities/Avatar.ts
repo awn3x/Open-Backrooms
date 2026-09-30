@@ -32,10 +32,10 @@ function template() {
 
 export const OUTFITS: Record<string, number> = {
   hoodie_olive: 0xffffff,
-  hoodie_red: 0xff8f86,
-  hoodie_blue: 0x9fb8ff,
-  hazmat_yellow: 0xfff08a,
-  janitor_grey: 0xc8c8c8,
+  hoodie_red: 0xff6a5c,
+  hoodie_blue: 0x7f9dff,
+  hazmat_yellow: 0xffe35a,
+  janitor_grey: 0xb0b0b0,
 };
 
 function nameTag(text: string) {
@@ -70,13 +70,18 @@ export class Avatar {
     this.ready = template().then(({ scene, clips }) => {
       const o = skClone(scene);
       const tint = OUTFITS[outfit] ?? 0xffffff;
+      // only the hoodie takes the outfit colour; skin, denim, hair and shoes stay as modelled
       o.traverse((x) => {
         const m = x as THREE.Mesh;
-        if (m.isMesh && !Array.isArray(m.material)) {
-          m.material = (m.material as THREE.MeshStandardMaterial).clone();
-          (m.material as THREE.MeshStandardMaterial).color.set(tint);
-          patchEntityMaterial(m.material as THREE.MeshStandardMaterial);
-        }
+        if (!m.isMesh) return;
+        const list = (Array.isArray(m.material) ? m.material : [m.material]) as THREE.MeshStandardMaterial[];
+        const next = list.map((mm) => {
+          if (!/hoodie/i.test(mm.name)) return mm;
+          const c = mm.clone();
+          c.color.multiply(new THREE.Color(tint));
+          return patchEntityMaterial(c);
+        });
+        m.material = next.length === 1 ? next[0] : next;
       });
       this.root.add(o, blobShadow(0.42, 0.34));
       this.mixer = new THREE.AnimationMixer(o);
@@ -108,11 +113,12 @@ export class Avatar {
   /** Choose a clip from ground speed & crouch. */
   locomote(speed: number, crouch: boolean, dt: number) {
     if (crouch) this.play(speed > 0.2 ? 'crouchwalk' : 'crouch');
-    else if (speed > 2.6) this.play('run');
+    else if (speed > 3.6) this.play('run');
     else if (speed > 0.25) this.play('walk');
     else this.play('idle');
     if (this.mixer) {
-      this.mixer.timeScale = this.cur === 'walk' ? Math.max(0.6, speed / 1.4) : this.cur === 'run' ? speed / 4.2 : 1;
+      // clips are authored at 2.0 m/s (walk), 5.0 m/s (run) and 1.2 m/s (crouch walk)
+      this.mixer.timeScale = this.cur === 'walk' ? Math.max(0.5, speed / 2.0) : this.cur === 'run' ? speed / 5.0 : this.cur === 'crouchwalk' ? Math.max(0.5, speed / 1.2) : 1;
       this.mixer.update(dt);
     }
   }

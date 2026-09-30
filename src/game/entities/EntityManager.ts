@@ -33,7 +33,7 @@ export interface EntitySnap {
 }
 
 const KIND_MODEL: Record<EntityKind, string> = { crawler: 'crawler', dweller: 'dweller', watcher: 'watcher', smiler: 'smiler', mimic: 'avatar' };
-const KIND_COLOR: Record<EntityKind, number> = { crawler: 0xc9c0b6, dweller: 0x6b4e40, watcher: 0x1a1a1c, smiler: 0x000000, mimic: 0xffffff };
+const KIND_COLOR: Record<EntityKind, number> = { crawler: 0xa39b91, dweller: 0x4a3328, watcher: 0x0b0b0c, smiler: 0x000000, mimic: 0xffffff };
 
 class Entity {
   obj: THREE.Object3D;
@@ -42,7 +42,8 @@ class Entity {
   anim = '';
   pos = new THREE.Vector3();
   yaw = 0;
-  state: 'wander' | 'investigate' | 'chase' | 'stalk' | 'lunge' | 'flee' | 'lurk' = 'wander';
+  state: 'wander' | 'investigate' | 'notice' | 'chase' | 'stalk' | 'lunge' | 'flee' | 'lurk' = 'wander';
+  touch = 0;
   path: [number, number][] = [];
   pathT = 0;
   goal: { x: number; z: number } | null = null;
@@ -97,6 +98,13 @@ export class EntityManager {
   private frustum = new THREE.Frustum();
   private tmpM = new THREE.Matrix4();
   remoteTargets: () => Target[] = () => [];
+  private lastSting = -99;
+  private sting(gain: number, rate = 1) {
+    const t = this.game.time;
+    if (t - this.lastSting < 12) return;
+    this.lastSting = t;
+    this.game.audio.play('sting_spot', { gain, rate });
+  }
   onChase?: () => void;
 
   constructor(private game: Game) {
@@ -117,8 +125,8 @@ export class EntityManager {
         const pm = mats.map((mm) => {
           const s = (mm as THREE.MeshStandardMaterial).clone();
           if (m.geometry.getAttribute('color')) s.vertexColors = true;
-          if (!s.name.startsWith('Glow') && !['Teeth', 'Mouth', 'EyeVoid'].includes(s.name)) s.color.set(KIND_COLOR[kind]);
-          if (kind === 'watcher') s.roughness = 0.3;
+          if (/_Skin$/.test(s.name) && kind !== 'mimic') s.color.set(KIND_COLOR[kind]);
+          if (kind === 'watcher' && /_Skin$/.test(s.name)) s.roughness = 0.25;
           if (s.name.startsWith('Glow')) {
             s.emissiveIntensity = 6;
             s.toneMapped = false;
@@ -276,7 +284,7 @@ export class EntityManager {
       if (e.mixer) {
         // crawlers move in unsettling stop-motion bursts
         e.twitchT -= dt;
-        if ((e.kind === 'crawler' || e.kind === 'dweller') && e.state !== 'chase' && e.twitchT > 0) {
+        if ((e.kind === 'crawler' || e.kind === 'dweller') && e.anim === 'idle' && e.twitchT > 0) {
           /* hold pose */
         } else e.mixer.update(dt);
         if (e.twitchT < -0.3 && Math.random() < dt * 0.8) e.twitchT = 0.08 + Math.random() * 0.25;
@@ -297,7 +305,10 @@ export class EntityManager {
         const d = Math.hypot(e.pos.x - me.pos.x, e.pos.z - me.pos.z);
         const reach = e.kind === 'watcher' ? 1.1 : e.kind === 'smiler' ? 0.9 : 0.85;
         const [gx, gz] = this.cellOf(me.pos.x, me.pos.z);
-        if (d < reach && (e.state === 'chase' || e.state === 'lunge' || e.kind === 'watcher') && !inHub(this.def.id, gx, gz)) {
+        const lethal = d < reach && (e.state === 'chase' || e.state === 'lunge' || e.kind === 'watcher') && !inHub(this.def.id, gx, gz);
+        // a short grace period so brushing past an entity isn't instant death
+        e.touch = lethal ? e.touch + dt : 0;
+        if (e.touch > 0.25) {
           void this.game.die(e.kind);
           this.game.camera.lookAt(e.pos.x, 1.3, e.pos.z);
         }
@@ -365,21 +376,31 @@ export class EntityManager {
       case 'crawler':
       case 'dweller':
       case 'mimic': {
-        const chaseSpeed = e.kind === 'mimic' ? 4.6 : e.kind === 'dweller' ? 4.2 : 4.0;
+        const chaseSpeed = e.kind === 'mimic' ? 5.0 : e.kind === 'dweller' ? 4.8 : 4.6;
         if (nearest && nd < (e.kind === 'dweller' ? 16 : 20) && losTo(nearest) && (nd < 7 || nearest.lit || g.world!.sampleE(nearest.x, nearest.z) > 0.12)) {
           if (e.kind === 'mimic' && e.state !== 'chase' && nd > 4) {
             // mimics walk toward you like a person would, then turn
             e.state = 'stalk';
-          } else {
-            if (e.state !== 'chase') {
-              g.audio.play(e.kind === 'mimic' ? 'static_burst' : 'crawler_scream', { pos: e.pos, gain: 0.9, reverb: 0.4, occlude: true });
-              if (nearest.id === 'me') g.audio.play('sting_spot', { gain: 0.55 });
-              this.onChase?.();
-            }
-            e.state = 'chase';
+          } else if (e.state !== 'chase' && e.state !== 'notice') {
+            // it notices you first: freezes, clicks, then comes — a beat to react
+            e.state = 'notice';
             e.target = nearest;
+            e.timer = 0.9;
+            g.audio.play('crawler_click', { pos: e.pos, gain: 0.9, occlude: true, reverb: 0.3 });
+          }
+        }
+        if (e.state === 'notice' && e.target) {
+          e.yaw = Math.atan2(e.target.x - e.pos.x, e.target.z - e.pos.z);
+          e.play('idle', 0.1);
+          e.timer -= dt;
+          if (e.timer <= 0) {
+            g.audio.play(e.kind === 'mimic' ? 'static_burst' : 'crawler_scream', { pos: e.pos, gain: 0.9, reverb: 0.4, occlude: true });
+            if (e.target.id === 'me') this.sting(0.5);
+            this.onChase?.();
+            e.state = 'chase';
             e.timer = 6;
           }
+          break;
         }
         if (e.state === 'stalk' && nearest) {
           e.goal = { x: nearest.x, z: nearest.z };
@@ -449,14 +470,14 @@ export class EntityManager {
         if (nearest) {
           e.goal = { x: nearest.x, z: nearest.z };
           if (!watched) {
-            this.moveAlong(e, nd > 10 ? 4.5 : 2.6, dt);
+            this.moveAlong(e, nd > 10 ? 3.2 : 2.0, dt);
             e.play('walk', 0.1);
             e.state = 'chase';
           } else {
             e.play('idle', 0.05);
             e.yaw = Math.atan2(nearest.x - e.pos.x, nearest.z - e.pos.z);
             e.seen += dt;
-            if (e.seen > 0.5 && e.seen < 0.6) g.audio.play('sting_spot', { gain: 0.35, rate: 0.7 });
+            if (e.seen > 0.5 && e.seen < 0.6) this.sting(0.35, 0.7);
           }
         }
         if (e.life > 70 && watched === false && nd > 18) e.life = 999;
@@ -477,13 +498,13 @@ export class EntityManager {
           e.target = litOn!;
           e.timer = 7;
           g.audio.play('smiler_hiss', { pos: e.pos, gain: 1, reverb: 0.4 });
-          if (litOn!.id === 'me') g.audio.play('sting_spot', { gain: 0.6 });
+          if (litOn!.id === 'me') this.sting(0.6);
         }
         if (e.state === 'chase' && e.target) {
           const t = alive.find((a) => a.id === e.target!.id);
           if (t) {
             e.goal = { x: t.x, z: t.z };
-            this.moveAlong(e, 5.2, dt);
+            this.moveAlong(e, 5.6, dt);
           }
           e.timer -= dt;
           if (e.timer <= 0) e.state = 'lurk';
