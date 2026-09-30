@@ -209,47 +209,63 @@ def variants(name, fn, n):
 
 
 # ------------------------------------------------------------------ footsteps
+
+def grains(dur, n, t0, t1, lo, hi, amp_env=None, width=0.0015, seed=None):
+    """Stochastic micro-impacts (PhISEM-style): n tiny noise grains between t0..t1."""
+    r = np.random.default_rng(seed)
+    x = np.zeros(int(dur * SR))
+    for _ in range(n):
+        at = r.uniform(t0, t1)
+        w = width * r.uniform(0.5, 1.6)
+        L = max(8, int(w * SR))
+        gr = r.standard_normal(L) * np.exp(-np.linspace(0, 5, L))
+        a = r.uniform(0.3, 1.0) * (amp_env(at) if amp_env else 1.0)
+        place(x, gr * a, at)
+    return bp(x, lo, hi, 2)
+
 def step_carpet(i, run=False):
-    d = 0.45
+    """Soft-soled shoe on damp commercial carpet: dull heel roll, fibre scuff, toe-off."""
+    r = np.random.default_rng(1000 + i + (500 if run else 0))
+    d = 0.5
     x = np.zeros(int(d * SR))
-    # heel: dull low thump through carpet + pad
-    th = lp(white(0.08), 260 + rng.uniform(-40, 60), 3) * env_exp(0.08, 0.018, 0.002)
-    body = np.sin(2 * np.pi * rng.uniform(62, 85) * t(0.12)) * env_exp(0.12, 0.03, 0.003) * 0.6
-    place(x, th * 1.2, 0.005)
-    place(x, body, 0.005)
-    # fibre scrunch
-    fib = bp(white(0.14), 1200, 7000) * bell(int(0.14 * SR), 0.25) * 0.10
-    place(x, fib, 0.012)
-    # damp squelch: mid band with bubbly modulation
-    sq = bp(white(0.2), 250, 1100) * bell(int(0.2 * SR), 0.2) * (0.5 + 0.5 * np.abs(np.sin(2 * np.pi * rng.uniform(25, 45) * t(0.2)))) * 0.28
-    place(x, sq, 0.03)
-    for _ in range(rng.integers(1, 4)):
-        f0 = rng.uniform(900, 2400)
-        bub = np.sin(2 * np.pi * np.cumsum(np.linspace(f0, f0 * 1.4, int(0.012 * SR))) / SR) * env_exp(0.012, 0.004)
-        place(x, bub * 0.05, rng.uniform(0.04, 0.14))
-    # toe roll-off
-    toe = lp(white(0.06), 400) * env_exp(0.06, 0.012, 0.004) * 0.5
-    place(x, toe, rng.uniform(0.09, 0.14) * (0.6 if run else 1.0))
-    place(x, bp(white(0.1), 1500, 6000) * bell(int(0.1 * SR), 0.3) * 0.06, 0.13)
-    return norm(x, -3 if run else -6)
+    heel_len = r.uniform(0.018, 0.035) * (0.7 if run else 1.0)
+    # heel roll: dense low grains -> soft thud with texture
+    env = lambda at: np.exp(-((at - 0.004) / heel_len) ** 2)
+    h = grains(d, int(r.uniform(60, 110)), 0.0, heel_len * 1.6, 60, 900, env, 0.002, r.integers(1e9))
+    place(x, h * 1.4, 0.0)
+    # body of the step through the floor (low, short)
+    thump = lp(white(0.09), r.uniform(140, 220), 3) * env_exp(0.09, r.uniform(0.012, 0.02), 0.003)
+    place(x, thump * 0.9, 0.0)
+    # fibre scuff: filtered noise swell, brighter when running
+    sl = r.uniform(0.05, 0.1)
+    sc = bp(white(sl), 700, 3800 if run else 2600) * bell(int(sl * SR), 0.3) * (0.16 if run else 0.07)
+    place(x, sc, r.uniform(0.01, 0.03))
+    # toe-off: a smaller grain cluster
+    toe_at = r.uniform(0.11, 0.17) * (0.65 if run else 1.0)
+    t2 = grains(d, int(r.uniform(20, 45)), 0.0, 0.02, 80, 1200, None, 0.0015, r.integers(1e9))
+    place(x, t2 * 0.45, toe_at)
+    # damp carpet: a faint wet 'tack' as the sole lifts (not bubbles)
+    if r.random() < 0.6:
+        tack = bp(white(0.03), 1200, 3500) * env_exp(0.03, 0.006) * 0.05
+        place(x, tack, toe_at + 0.02)
+    x = lp(x, 5200 if run else 3800)
+    return norm(conv(x, OFFICE_IR, 0.08), -3 if run else -6)
 
 
 def step_concrete(i):
-    d = 0.4
+    """Rubber sole on bare concrete with grit: short heel knock, sandy grit, big room tail."""
+    r = np.random.default_rng(2000 + i)
+    d = 0.45
     x = np.zeros(int(d * SR))
-    click = hp(white(0.006), 1800) * env_exp(0.006, 0.0012) * 0.5
-    body = modal(0.15, [rng.uniform(140, 190), rng.uniform(300, 420), rng.uniform(700, 900)], [0.03, 0.018, 0.01], [0.6, 0.35, 0.2])
-    thump = lp(white(0.05), 300) * env_exp(0.05, 0.012) * 0.8
-    place(x, click, 0.002)
-    place(x, body, 0.002)
-    place(x, thump, 0.002)
-    # grit
-    g = (rng.random(int(0.12 * SR)) < 0.004) * rng.standard_normal(int(0.12 * SR))
-    place(x, hp(g, 3000) * 0.4 * bell(len(g), 0.1), 0.02)
-    toe = hp(white(0.005), 1500) * env_exp(0.005, 0.001) * 0.25
-    place(x, toe, rng.uniform(0.08, 0.12))
-    place(x, modal(0.08, [rng.uniform(200, 260)], [0.015], [0.3]), rng.uniform(0.08, 0.12))
-    return norm(conv(x, OFFICE_IR, 0.12), -6)
+    env = lambda at: np.exp(-((at - 0.003) / 0.012) ** 2)
+    place(x, grains(d, int(r.uniform(40, 70)), 0.0, 0.02, 120, 2500, env, 0.0012, r.integers(1e9)) * 1.3, 0.0)
+    place(x, lp(white(0.05), 320, 2) * env_exp(0.05, 0.01, 0.002) * 0.7, 0.0)
+    # grit under the sole: sparse bright ticks over the stance
+    place(x, grains(d, int(r.uniform(10, 26)), 0.005, 0.16, 2500, 9000, None, 0.0006, r.integers(1e9)) * 0.35, 0.0)
+    toe_at = r.uniform(0.09, 0.13)
+    place(x, grains(d, int(r.uniform(15, 30)), 0.0, 0.012, 150, 3000, None, 0.001, r.integers(1e9)) * 0.55, toe_at)
+    place(x, bp(white(0.06), 1500, 6000) * bell(int(0.06 * SR), 0.3) * 0.06, toe_at)
+    return norm(conv(x, OFFICE_IR, 0.18), -6)
 
 
 def step_metal(i):
@@ -268,18 +284,18 @@ def step_metal(i):
 
 
 def step_water(i):
-    d = 0.6
+    """Shallow puddle: low slap, broadband splash with several sub-splashes, drips back."""
+    r = np.random.default_rng(3000 + i)
+    d = 0.7
     x = np.zeros(int(d * SR))
-    spl = bp(white(0.2), 700, 6000) * env_exp(0.2, 0.05, 0.004) * 0.6
-    place(x, spl, 0.0)
-    place(x, lp(white(0.06), 300) * env_exp(0.06, 0.015), 0.0)
-    for _ in range(rng.integers(4, 9)):
-        f0 = rng.uniform(500, 1800)
-        L = rng.uniform(0.01, 0.03)
-        bub = np.sin(2 * np.pi * np.cumsum(np.linspace(f0, f0 * rng.uniform(1.3, 2.0), int(L * SR))) / SR) * env_exp(L, L / 3)
-        place(x, bub * rng.uniform(0.1, 0.25), rng.uniform(0.01, 0.3))
-    place(x, bp(white(0.25), 400, 3000) * bell(int(0.25 * SR), 0.2) * 0.25, rng.uniform(0.12, 0.2))
-    return norm(x, -6)
+    place(x, lp(white(0.06), 260) * env_exp(0.06, 0.014) * 0.9, 0.0)
+    for k in range(r.integers(3, 6)):
+        L = r.uniform(0.04, 0.12)
+        sp = bp(white(L), r.uniform(600, 1200), r.uniform(4000, 9000)) * env_exp(L, L / 3, 0.002)
+        place(x, sp * r.uniform(0.3, 0.7), r.uniform(0.0, 0.08))
+    for k in range(r.integers(3, 8)):
+        place(x, grains(0.03, 6, 0, 0.01, 1500, 6000, None, 0.0008, r.integers(1e9)) * 0.2, r.uniform(0.12, 0.45))
+    return norm(conv(x, OFFICE_IR, 0.12), -6)
 
 
 def land(kind):
@@ -307,21 +323,38 @@ def cloth(i):
 
 
 # ------------------------------------------------------------------ body
+def breath_one(kind, r, mouth=True, strength=1.0, voice=0.0):
+    """One breath (inhale or exhale): pink airflow through vocal-tract formants."""
+    if kind == "in":
+        L = r.uniform(0.35, 0.7) / (0.6 + 0.4 * strength)
+        src = pink(L) + white(L) * 0.15
+        form = [(r.uniform(900, 1300), 3.0, 0.8), (r.uniform(2200, 2800), 4.0, 0.6), (r.uniform(3800, 4600), 5.0, 0.3)]
+        shape = bell(int(L * SR), 0.75) ** 1.3
+    else:
+        L = r.uniform(0.45, 0.9) / (0.6 + 0.4 * strength)
+        src = pink(L)
+        form = [(r.uniform(500, 750), 2.5, 1.0), (r.uniform(1050, 1400), 3.0, 0.7), (r.uniform(2300, 2700), 4.0, 0.35)]
+        if not mouth:
+            form = [(r.uniform(250, 350), 2.0, 0.8), (r.uniform(1900, 2300), 5.0, 0.4)]  # nasal
+        shape = bell(int(L * SR), 0.18) ** 1.1
+    y = np.zeros_like(src)
+    for f0, q, g_ in form:
+        y += peak(src, f0, q) * g_
+    y = lp(hp(y, 180), 5500)
+    y *= shape
+    if voice > 0 and kind == "out":
+        n = len(y)
+        f0 = r.uniform(170, 220) * (1 - 0.15 * np.linspace(0, 1, n)) * (1 + 0.012 * r.standard_normal(n).cumsum() / np.sqrt(n))
+        ph = np.cumsum(f0) / SR
+        pulses = np.clip(np.sin(2 * np.pi * ph), 0, 1) ** 6
+        v = sum(peak(pulses, f, q) * g_ for f, q, g_ in form)
+        y += lp(v, 3000) * voice * shape * 0.5
+    return y * strength
+
+
 def breath_cycle(inhale, exhale, pause, voice=0.0, mouth=False, gain=1.0):
-    ni, ne = int(inhale * SR), int(exhale * SR)
-    inh = bp(white(inhale), 900 if not mouth else 600, 5500) * bell(ni, 0.7)
-    inh = peak(inh, 2600, 3) * 0.6 + inh
-    exh = bp(white(exhale), 250 if mouth else 400, 3500) * bell(ne, 0.25)
-    for f, g in ((650, 1.0), (1150, 0.7), (2400, 0.4)) if mouth else ((900, 0.6), (1800, 0.5), (3000, 0.3)):
-        exh += peak(exh, f, 4) * g * 0.4
-    if voice > 0:
-        f0 = 170 + rng.uniform(-20, 20)
-        ph = np.cumsum(f0 * (1 + 0.03 * np.sin(2 * np.pi * 5 * t(exhale))) + rng.standard_normal(ne) * 4) / SR
-        v = signal.sawtooth(2 * np.pi * ph) * bell(ne, 0.3) * voice
-        v = peak(lp(v, 1600), 550, 3) + peak(lp(v, 1600), 950, 4) * 0.5
-        exh += v * 0.4
-    x = np.concatenate([inh * 0.55, np.zeros(int(0.05 * SR)), exh, np.zeros(int(pause * SR))])
-    return x * gain
+    r = np.random.default_rng()
+    return np.concatenate([breath_one("in", r, mouth), np.zeros(int(0.04 * SR)), breath_one("out", r, mouth, voice=voice), np.zeros(int(pause * SR))]) * gain
 
 
 def breath_loop(kind):
@@ -437,26 +470,38 @@ def outlet_buzz():
 
 
 def hum_loop():
-    """Fluorescent tube hum for the positional light field (loop)."""
+    """Magnetic ballast: full-wave-rectified 60 Hz (a 120 Hz buzz rich in harmonics),
+    housing resonances, a fizz of arcing noise locked to the mains cycle, rare crackles."""
     d = 6.0
     tt = t(d)
-    x = np.zeros_like(tt)
-    for h, a in ((1, 1.0), (2, 0.55), (3, 0.35), (4, 0.18), (5, 0.12), (7, 0.06), (9, 0.04)):
-        x += a * np.sin(2 * np.pi * 120 * h * tt + rng.uniform(0, 6))
-    x *= 1 + 0.05 * np.sin(2 * np.pi * 0.5 * tt)
-    whine = np.sin(2 * np.pi * 15600 * tt) * 0.01
-    hiss = hp(white(d), 5000) * 0.02
-    return norm(x * 0.5 + whine + hiss, -6)
+    jit = 1 + 0.004 * lp(white(d), 3) * 20
+    ph = 2 * np.pi * 60 * np.cumsum(jit) / SR
+    rect = np.abs(np.sin(ph))
+    buzz = np.tanh((rect - 0.62) * 3.0)
+    body = sum(peak(buzz, f, q) * g_ for f, q, g_ in ((120, 4, 1.0), (240, 6, 0.8), (360, 8, 0.5), (720, 10, 0.35), (1150, 8, 0.25)))
+    fizz = lp(hp(white(d), 2000), 6000) * np.abs(np.sin(ph)) ** 10 * 0.06
+    crack = (np.random.default_rng(7).random(len(tt)) < 3 / SR) * np.random.default_rng(8).standard_normal(len(tt))
+    crack = lp(hp(crack, 2000), 7000) * 0.5
+    x = lp(body * 0.6, 4000) + fizz + crack
+    x *= 1 + 0.06 * np.sin(2 * np.pi * 0.37 * tt)
+    return norm(loopify(x, 0.5), -6)
 
 
 # ------------------------------------------------------------------ ambience
 def amb_l0():
+    """Level 0 room tone: HVAC air, a far-off chorus of ballasts, faint building rumble."""
     d = 30
     tt = t(d)
-    air = lp(pink(d), 380, 3) * 0.6
-    rumble = lp(brown(d), 60) * 0.5
-    x = air + rumble + hp(white(d), 6000) * 0.008
-    x *= 1 + 0.12 * lp(white(d), 0.3) * 20
+    air = lp(pink(d), 420, 3) * 0.55
+    rumble = lp(brown(d), 55) * 0.45
+    chorus = np.zeros_like(tt)
+    for k in range(5):
+        ph = 2 * np.pi * 60 * (1 + np.random.default_rng(k).uniform(-0.002, 0.002)) * tt
+        chorus += np.tanh((np.abs(np.sin(ph)) - 0.6) * 3)
+    chorus = lp(peak(chorus, 120, 3) + peak(chorus, 240, 4) * 0.6, 900)
+    chorus = conv(chorus / 5, BIG_IR, 0.9, 0.2) * 0.12
+    x = air + rumble + chorus[: len(air)]
+    x *= 1 + 0.1 * lp(white(d), 0.3) * 20
     return norm(loopify(x, 2.0), -14)
 
 
@@ -589,29 +634,39 @@ def crawler_click(i):
 
 
 def crawler_rasp():
+    """Wet, laboured breathing with vocal fry (irregular glottal clicks) for crawlers."""
     d = 8
-    tt = t(d)
-    rate = 38 + 12 * np.sin(2 * np.pi * tt / 3.1) + rng.standard_normal(len(tt)) * 3
-    ph = np.cumsum(rate) / SR
-    pulses = (np.diff(np.floor(ph), prepend=0) > 0).astype(float) * (0.5 + rng.random(len(tt)))
-    src = lp(pulses, 3000) + white(d) * 0.08
-    breath = 0.5 + 0.5 * np.sin(2 * np.pi * tt / 1.7)
-    x = (peak(src, 450, 5) + peak(src, 1100, 6) * 0.6 + peak(src, 2600, 8) * 0.3) * breath
-    x = np.tanh(x * 2)
-    return norm(loopify(x, 0.4), -6)
+    n = int(d * SR)
+    r = np.random.default_rng(66)
+    y = np.zeros(n)
+    at = 0.0
+    while at < d - 1.2:
+        L = r.uniform(0.5, 1.1)
+        m = int(L * SR)
+        rate = r.uniform(25, 55)
+        ticks = (r.random(m) < rate / SR) * r.uniform(0.4, 1.0, m)
+        src = lp(ticks, 2500) + pink(L) * 0.25
+        seg = peak(src, r.uniform(350, 500), 4) + peak(src, r.uniform(900, 1200), 5) * 0.6 + peak(src, 2600, 7) * 0.2
+        seg *= bell(m, r.uniform(0.2, 0.5))
+        place(y, seg, at)
+        at += L + r.uniform(0.15, 0.6)
+    y = np.tanh(y * 3)
+    return norm(loopify(y, 0.4), -6)
 
 
 def crawler_scream():
-    d = 1.8
-    tt = t(d)
-    x = np.zeros_like(tt)
-    for k in range(5):
-        f = (300 + 700 * np.clip(tt / 0.4, 0, 1)) * rng.uniform(0.96, 1.04) * (1 + 0.04 * np.sin(2 * np.pi * rng.uniform(6, 11) * tt))
-        x += signal.sawtooth(2 * np.pi * np.cumsum(f) / SR)
-    x += white(d) * 1.5
-    x = peak(x, 2800, 3) + peak(x, 3600, 5) * 0.7 + hp(x, 1500) * 0.3
-    x = np.tanh(x * 1.5) * env_ar(len(tt), 0.02, 0.8)
-    return norm(conv(x, OFFICE_IR, 0.3), -1)
+    """A torn, human-ish shriek: jittery glottal pulses through shifting formants, distorted."""
+    d = 1.6
+    n = int(d * SR)
+    r = np.random.default_rng(55)
+    f0 = (380 + 520 * np.clip(np.linspace(0, 1, n) / 0.25, 0, 1)) * (1 + 0.05 * lp(r.standard_normal(n), 12) * 8)
+    ph = np.cumsum(f0) / SR
+    pulses = np.clip(np.sin(2 * np.pi * ph), 0, 1) ** 4 + r.standard_normal(n) * 0.35
+    k = np.linspace(0, 1, n)
+    y = peak(pulses, 900, 5) * (1 - k) + peak(pulses, 1300, 5) * k + peak(pulses, 2900, 6) * 0.8 + peak(pulses, 3700, 7) * 0.5
+    y = np.tanh(y * 2.5) * env_ar(n, 0.015, 0.7)
+    rough = bp(white(d), 2000, 8000) * env_ar(n, 0.01, 0.9) * 0.4
+    return norm(conv(y + rough, OFFICE_IR, 0.35), -1)
 
 
 def crawler_step(i):
@@ -794,8 +849,12 @@ def main():
         write(f"land_{k}", land(k))
     variants("cloth", cloth, 5)
     print("body")
-    for k in ("calm", "tired", "panic"):
-        write(f"breath_{k}", breath_loop(k), loop=True)
+    r = np.random.default_rng(77)
+    for i in range(8):
+        write(f"breath_in_{i}", norm(breath_one("in", r, mouth=True, strength=r.uniform(0.7, 1.0)), -3))
+        write(f"breath_out_{i}", norm(breath_one("out", r, mouth=True, strength=r.uniform(0.7, 1.0)), -3))
+    for i in range(6):
+        write(f"breath_panic_{i}", norm(breath_one("out", r, mouth=True, strength=1.0, voice=0.6), -3))
     write("heartbeat", heartbeat())
     write("tinnitus", tinnitus(), loop=True)
     print("electrical")
@@ -810,7 +869,6 @@ def main():
     write("amb_l0", amb_l0(), loop=True)
     write("amb_l1", amb_l1(), loop=True)
     write("amb_l2", amb_l2(), loop=True)
-    write("tape_hiss", tape_hiss(), loop=True)
     print("distant")
     variants("knock", knock, 3)
     write("slam", slam())
@@ -836,7 +894,6 @@ def main():
     write("drink", drink())
     write("ui_click", ui_click())
     write("ui_hover", ui_hover())
-    write("vhs_insert", vhs_insert())
     write("static_burst", static_burst())
     write("death", death())
     write("door_open", door_open())
