@@ -14,13 +14,15 @@ export interface Preset {
   aniso: number;
   bloom: number;
   pixelRatioCap: number;
+  msaa: number;
+  ssao: boolean;
 }
 
 export const PRESETS: Record<Quality, Preset> = {
-  low: { scale: 0.62, lights: 3, shadows: false, shadowSize: 512, blurSamples: 0, radius: 1, tier: 'lo', aniso: 2, bloom: 0.07, pixelRatioCap: 1 },
-  medium: { scale: 0.8, lights: 5, shadows: true, shadowSize: 512, blurSamples: 6, radius: 2, tier: 'lo', aniso: 4, bloom: 0.08, pixelRatioCap: 1 },
-  high: { scale: 1.0, lights: 8, shadows: true, shadowSize: 1024, blurSamples: 8, radius: 2, tier: 'hi', aniso: 8, bloom: 0.08, pixelRatioCap: 1.25 },
-  ultra: { scale: 1.0, lights: 12, shadows: true, shadowSize: 2048, blurSamples: 12, radius: 3, tier: 'hi', aniso: 16, bloom: 0.08, pixelRatioCap: 2 },
+  low: { scale: 0.7, lights: 3, shadows: false, shadowSize: 512, blurSamples: 0, radius: 1, tier: 'lo', aniso: 4, bloom: 0.07, pixelRatioCap: 1, msaa: 0, ssao: false },
+  medium: { scale: 0.75, lights: 5, shadows: true, shadowSize: 1024, blurSamples: 6, radius: 2, tier: 'hi', aniso: 8, bloom: 0.08, pixelRatioCap: 1.5, msaa: 0, ssao: true },
+  high: { scale: 0.85, lights: 8, shadows: true, shadowSize: 1024, blurSamples: 8, radius: 2, tier: 'hi', aniso: 16, bloom: 0.08, pixelRatioCap: 2, msaa: 4, ssao: true },
+  ultra: { scale: 1.0, lights: 12, shadows: true, shadowSize: 2048, blurSamples: 12, radius: 3, tier: 'hi', aniso: 16, bloom: 0.08, pixelRatioCap: 2, msaa: 4, ssao: true },
 };
 
 export function detectQuality(gl: WebGLRenderingContext | WebGL2RenderingContext): Quality {
@@ -32,7 +34,7 @@ export function detectQuality(gl: WebGLRenderingContext | WebGL2RenderingContext
     /* ignore */
   }
   if (/swiftshader|llvmpipe|software|basic render/.test(r)) return 'low';
-  if (/apple m[2-9]|apple m1 (pro|max|ultra)|rtx|radeon rx|geforce gtx 1[06-9]|geforce gtx 2|arc a7/.test(r)) return 'high';
+  if (/apple m[1-9]|apple gpu|rtx|radeon rx|geforce gtx 1[06-9]|geforce gtx 2|arc a7/.test(r)) return 'high';
   if (/apple|m1|radeon|geforce|nvidia/.test(r)) return 'medium';
   if (/intel|uhd|iris|mali|adreno|powervr/.test(r)) return 'low';
   return 'medium';

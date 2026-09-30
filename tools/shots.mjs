@@ -8,7 +8,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const root = path.resolve('dist');
+const root = path.resolve('docs');
 const out = path.resolve(process.argv[2] || 'tools/out/shots');
 const level = Number(process.argv[3] || 0);
 fs.mkdirSync(out, { recursive: true });
@@ -38,7 +38,11 @@ page.on('console', (m) => {
   if (m.type() === 'error') errors.push(m.text());
   if (process.env.VERBOSE) console.log('[page]', m.type(), m.text());
 });
-await page.goto('http://localhost:4180/play/');
+await page.goto('http://localhost:4180/');
+if (process.env.QUALITY) {
+  await page.evaluate((q) => localStorage.setItem('ob.settings2', JSON.stringify({ quality: q })), process.env.QUALITY);
+  await page.reload();
+}
 await page.waitForSelector('#boot .start:not(.hidden)', { timeout: 120000 });
 await page.screenshot({ path: path.join(out, '00_boot.png') });
 await page.click('#boot .start');
@@ -73,8 +77,8 @@ for (const p of poses) {
     g.player.pos.z = r.z;
     g.post.resetHistory(g.camera);
   }, p);
-  await page.waitForTimeout(5000);
-  await page.screenshot({ path: path.join(out, `L${level}_${p.name}.png`) });
+  await page.waitForTimeout(Number(process.env.WAIT || 5000));
+  await page.screenshot({ path: path.join(out, `L${level}_${p.name}.png`), timeout: 180000 });
 }
 const stats = await page.evaluate(() => {
   const g = window.__game;

@@ -26,6 +26,7 @@ export const WU = {
   uWet: { value: 0.3 },
   uRtDiffuse: { value: 0.18 },
   uFlash: { value: 1.0 },
+  uBounceCol: { value: new THREE.Color(0.55, 0.45, 0.22) },
 };
 
 const COMMON = /* glsl */ `
@@ -47,6 +48,7 @@ uniform vec4 uTileInfo;
 uniform float uWallH;
 uniform float uWet;
 uniform float uRtDiffuse;
+uniform vec3 uBounceCol;
 varying vec3 vWPos;
 varying vec3 vWNrm;
 float gDiffScale = 1.0;
@@ -87,6 +89,11 @@ vec3 lmIrr(vec3 p, out float ao) {
   return ((s.r * s.r + s.g * s.g * cs.r) * uLightCol * pw + s.b * s.b * uAccentCol) * LM_MAX * uLightGain;
 }
 float lmLum(vec2 xz) { vec4 s = lmFetch(xz); return s.r * s.r + s.g * s.g + s.b * s.b; }
+// one-bounce fill: light arriving in the neighbourhood, re-emitted tinted by the room's surfaces
+vec3 lmBounce(vec3 p) {
+  float b = lmLum(p.xz + vec2(1.4, 0.0)) + lmLum(p.xz - vec2(1.4, 0.0)) + lmLum(p.xz + vec2(0.0, 1.4)) + lmLum(p.xz - vec2(0.0, 1.4));
+  return uBounceCol * b * 0.25 * LM_MAX * uLightGain * powerAt(p);
+}
 float lightLink(float link, vec3 p) {
   if (link < 0.5) return 1.0;
   float pw = powerAt(p);
@@ -258,7 +265,7 @@ ${hasMat ? 'attribute vec4 aMat; varying vec4 vMat;' : ''}`,
       vec3 Lw = normalize(vec3(gx * 3.0, 0.9, gz * 3.0) + vec3(vWNrm.x, 0.0, vWNrm.z) * 0.6);
       vec3 nW = inverseTransformDirection(normal, viewMatrix);
       float bump = clamp(dot(nW, Lw) / max(dot(vWNrm, Lw), 0.25), 0.35, 1.7);
-      irradiance += (E * hprof * cao * mix(1.0, bump, 0.85) * 0.85 + uAmbient) * PI;`,
+      irradiance += (E * hprof * cao * mix(1.0, bump, 0.85) * 0.85 + lmBounce(sp) * 0.3 * cao + uAmbient) * PI;`,
       floor: `
       float ao;
       vec3 E = lmIrr(vWPos, ao);
@@ -267,11 +274,11 @@ ${hasMat ? 'attribute vec4 aMat; varying vec4 vMat;' : ''}`,
       vec3 Lf = normalize(vec3(gx * 2.5, 1.0, gz * 2.5));
       vec3 nW = inverseTransformDirection(normal, viewMatrix);
       float bump = clamp(dot(nW, Lf) / max(Lf.y, 0.3), 0.4, 1.5);
-      irradiance += (E * ao * mix(1.0, bump, 0.9) + uAmbient * ao) * PI;`,
+      irradiance += (E * ao * mix(1.0, bump, 0.9) + lmBounce(vWPos) * 0.22 * ao + uAmbient * ao) * PI;`,
       ceil: `
       float ao;
       vec3 E = lmIrr(vWPos, ao);
-      irradiance += (E * 0.26 * (0.55 + 0.45 * ao) + uAmbient) * PI;`,
+      irradiance += (E * 0.2 * (0.55 + 0.45 * ao) + lmBounce(vWPos) * 0.45 * (0.6 + 0.4 * ao) + uAmbient) * PI;`,
       plenum: `
       float ao;
       vec3 E = lmIrr(vWPos, ao);
@@ -280,7 +287,7 @@ ${hasMat ? 'attribute vec4 aMat; varying vec4 vMat;' : ''}`,
       float ao;
       vec3 E = lmIrr(vWPos + vWNrm * 0.15, ao);
       float up = 0.55 + 0.45 * vWNrm.y;
-      irradiance += (E * mix(0.6, 1.0, ao) * up + uAmbient) * PI;`,
+      irradiance += (E * mix(0.6, 1.0, ao) * up + lmBounce(vWPos) * 0.3 + uAmbient) * PI;`,
       pipe: `
       float ao;
       vec3 E = lmIrr(vWPos + vWNrm * 0.15, ao);
@@ -298,7 +305,7 @@ ${hasMat ? 'attribute vec4 aMat; varying vec4 vMat;' : ''}`,
       entity: `
       float ao;
       vec3 E = lmIrr(vWPos + vWNrm * 0.2, ao);
-      irradiance += (E * (0.5 + 0.35 * vWNrm.y) + uAmbient) * PI;`,
+      irradiance += (E * (0.5 + 0.35 * vWNrm.y) + lmBounce(vWPos) * 0.3 + uAmbient) * PI;`,
     }[surf];
     fs = fs.replace('#include <lights_fragment_end>', `{${irr}}\n#include <lights_fragment_end>`);
 

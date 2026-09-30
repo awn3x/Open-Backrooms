@@ -3,141 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Open Backrooms — free hyper-real Backrooms in your browser</title>
-    <meta name="description" content="Noclip into the Backrooms. A free, open-source, hyper-realistic Backrooms horror game that runs in your browser — with peer-to-peer multiplayer, proximity voice, a safe base, AI companions and three levels." />
-    <meta property="og:title" content="Open Backrooms" />
-    <meta property="og:description" content="Free, hyper-real Backrooms in your browser. Multiplayer, proximity voice, three levels." />
-    <meta property="og:image" content="./site/og.webp" />
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="theme-color" content="#0b0a07" />
+    <title>Open Backrooms</title>
+    <meta name="description" content="Open Backrooms: a free, hyper-real Backrooms horror game in your browser, with P2P multiplayer and proximity voice." />
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#000000" />
     <script>
-      // Shown only if this file is served without the Vite build (e.g. Pages set to "Deploy from a branch").
+      // Shown only if this file is served without the build (Pages must serve the docs/ folder).
       addEventListener('DOMContentLoaded', function () {
         if (!document.querySelector('script[src$=".ts"]')) return;
         document.body.innerHTML = '<div style="font:16px/1.6 system-ui;max-width:640px;margin:15vh auto;padding:0 20px;color:#ece5c8">' +
-          '<h1 style="font-weight:600">Open Backrooms isn\'t built yet</h1>' +
-          '<p>This is the raw source. In the repository go to <b>Settings \u2192 Pages \u2192 Source</b>, choose <b>GitHub Actions</b>, then re-run the <b>Deploy to GitHub Pages</b> workflow from the Actions tab.</p></div>';
+          '<h1 style="font-weight:600">This is the unbuilt source</h1>' +
+          '<p>In the repository go to <b>Settings → Pages</b>, set Source to <b>Deploy from a branch</b>, branch <b>main</b>, folder <b>/docs</b>.</p></div>';
         document.body.style.background = '#0b0a07';
       });
     </script>
   </head>
   <body>
-    <header class="nav">
-      <a class="brand" href="./">OPEN BACKROOMS</a>
-      <nav>
-        <a href="#levels">Levels</a>
-        <a href="#entities">Entities</a>
-        <a href="#multiplayer">Multiplayer</a>
-        <a href="#base">The Base</a>
-        <a href="#faq">FAQ</a>
-        <a class="cta small" href="./play/">Play free</a>
-      </nav>
-    </header>
-
-    <section class="hero">
-      <div class="hero-bg"></div>
-      <div class="scan"></div>
-      <div class="hero-inner">
-        <div class="osd rec"><span class="dot"></span>REC <span class="tc">00:00:00</span></div>
-        <h1>If you're not careful and you noclip out of reality in the wrong areas…</h1>
-        <p class="lede">…you'll end up here. Open Backrooms is a free, hyper-real Backrooms horror game that runs right in your browser. The damp carpet, the endless hum of fluorescent lights, and the things that live between them. Explore alone, with AI companions, or with friends over proximity voice.</p>
-        <div class="actions">
-          <a class="cta" href="./play/">▶ Play now — it's free</a>
-          <a class="ghost" href="#multiplayer">Invite friends</a>
-        </div>
-        <p class="fine">No download · No account · No payments, ever · Works on most PCs &amp; Macs (Chrome, Edge, Firefox, Safari 16+)</p>
-      </div>
-      <div class="osd date">SEP. 30 1996 · LEVEL 0</div>
-    </section>
-
-    <section class="strip">
-      <div><b>3</b><span>hand-tuned levels</span></div>
-      <div><b>∞</b><span>procedural rooms</span></div>
-      <div><b>5</b><span>entities</span></div>
-      <div><b>8</b><span>players per world</span></div>
-      <div><b>0</b><span>dollars, forever</span></div>
-    </section>
-
-    <section id="levels" class="block">
-      <h2>Three levels. Same obsessive detail.</h2>
-      <div class="cards three">
-        <article class="card"><img src="./site/l0.webp" alt="Level 0: endless yellow rooms, fluorescent troffers and damp carpet" loading="lazy" /><h3>Level 0 · The Lobby</h3><p>Mono-yellow wallpaper, water-stained drop ceilings, dying troffers and outlets that still spark. Follow scrawled arrows — most of them tell the truth.</p></article>
-        <article class="card"><img src="./site/l1.webp" alt="Level 1: vast concrete warehouse with fog and hanging lamps" loading="lazy" /><h3>Level 1 · Habitable Zone</h3><p>A foggy concrete expanse of pillars, puddles and supply crates. Periodic blackouts roll across the floor toward you.</p></article>
-        <article class="card"><img src="./site/l2.webp" alt="Level 2: narrow maintenance tunnels lined with pipes and red emergency lights" loading="lazy" /><h3>Level 2 · Pipe Dreams</h3><p>Hot, narrow maintenance tunnels choked with pipes, steam and red emergency lights. Something knocks back.</p></article>
-      </div>
-    </section>
-
-    <section id="entities" class="block dark">
-      <h2>Things that share the space</h2>
-      <div class="cards">
-        <article class="mini"><h3>Crawlers</h3><p>Pale, too-long limbs, no eyes. They hunt by <b>sound</b>. Walk. Crouch. Don't sprint past their room.</p></article>
-        <article class="mini"><h3>The Watcher</h3><p>It only moves when <b>no one is looking</b>. Keep it in view and back away slowly.</p></article>
-        <article class="mini"><h3>Smilers</h3><p>A grin in the dark. They hate being <b>lit</b>. Point your flashlight at one, and run.</p></article>
-        <article class="mini"><h3>Mimics</h3><p>Looks like one of your friends. Wears their name. Walks a little wrong.</p></article>
-        <article class="mini"><h3>Pipe-dwellers</h3><p>You'll hear them knocking along the pipes long before you see them.</p></article>
-      </div>
-    </section>
-
-    <section id="multiplayer" class="block">
-      <div class="split">
-        <div>
-          <h2>Get lost together</h2>
-          <ul class="ticks">
-            <li><b>Public worlds</b> with region-based matchmaking (NA, SA, EU, Africa, Asia, Oceania). Worlds fill up to 8 players, then overflow into the next one.</li>
-            <li><b>Custom rooms</b>: pick a name (and optional password) and send friends your own invite link.</li>
-            <li><b>Proximity voice</b> in 3D: muffled through walls, echoing down corridors. Push-to-talk or open mic.</li>
-            <li><b>Text chat</b> with a bad-word filter you can toggle.</li>
-            <li><b>AI mode</b>: two capable companions explore with you offline. No chat, board or voice, but you still earn coins.</li>
-          </ul>
-          <p class="fine">Multiplayer is peer-to-peer (WebRTC). There's no game server to pay for — that's how it stays free. A few very strict networks may block direct connections.</p>
-        </div>
-        <img class="shot" src="./site/menu.webp" alt="Main menu over a live view of the base" loading="lazy" />
-      </div>
-    </section>
-
-    <section id="base" class="block dark">
-      <div class="split rev">
-        <img class="shot" src="./site/base.webp" alt="The base: a safe zone with lockers, a supply kiosk and a bulletin board" loading="lazy" />
-        <div>
-          <h2>The Base</h2>
-          <p>Everyone spawns in a lit, quiet safe zone. Entities can't come in.</p>
-          <ul class="ticks">
-            <li><b>Supply Kiosk</b>: Almond Water, batteries, a heavy-duty torch, outfits.</li>
-            <li><b>Lockers</b>: stash items so you don't lose them when you're taken.</li>
-            <li><b>Bulletin Board</b>: pin a note for everyone in your world. Costs 20 Backrooms Coins, and notes are filtered to keep them friendly.</li>
-          </ul>
-          <p class="fine">Backrooms Coins (BC) are earned only by playing: exploring, surviving, finding Almond Water and escaping. There is no store and no real money, ever.</p>
-        </div>
-      </div>
-    </section>
-
-    <section class="block">
-      <h2>Made the hard way</h2>
-      <div class="cards">
-        <article class="mini"><h3>Modelled in Blender</h3><p>Every outlet, troffer, vent, door, locker and creature is built and rigged by scripts running Blender, then exported to glTF.</p></article>
-        <article class="mini"><h3>Procedural materials</h3><p>Wallpaper, carpet, ceiling tiles, concrete and rust are generated as tileable PBR maps: colour, normal, roughness and AO.</p></article>
-        <article class="mini"><h3>Baked light fields</h3><p>Hundreds of fluorescent fixtures with soft wall occlusion, flicker circuits and power-down waves, cheap enough for laptops.</p></article>
-        <article class="mini"><h3>Synthesised sound</h3><p>Footsteps on damp carpet, 120&nbsp;Hz ballast hum, breathing and heartbeat, all designed from DSP with HRTF 3D audio and room reverb.</p></article>
-        <article class="mini"><h3>Camcorder feel</h3><p>Real motion blur, gait-driven head motion, handheld tremor, and a subtle VHS pass: grain, chroma bleed, tracking.</p></article>
-        <article class="mini"><h3>Runs almost anywhere</h3><p>Auto quality presets, dynamic resolution and texture tiers. Tested on integrated GPUs and Apple Silicon.</p></article>
-      </div>
-    </section>
-
-    <section id="faq" class="block dark">
-      <h2>FAQ</h2>
-      <details><summary>Is it really free?</summary><p>Yes. No ads, no accounts, no purchases. Coins are earned only by playing.</p></details>
-      <details><summary>What do I need?</summary><p>A keyboard and mouse (or a gamepad) and a modern browser with WebGL2. Headphones make it much scarier.</p></details>
-      <details><summary>How do I play with friends?</summary><p>Open <i>Online → Create Room</i>, choose a name, then press TAB in game to copy the invite link. Or join a public world in your region.</p></details>
-      <details><summary>Controls?</summary><p>WASD move · Shift sprint · C crouch · Space jump · F flashlight · E interact · Q almond water · R battery · T chat · V push-to-talk · Tab players/pause.</p></details>
-      <details><summary>Where did the Backrooms come from?</summary><p>The Backrooms began as an anonymous 2019 creepypasta built around a single photo, and grew through a huge community of writers and artists. This game is a fan work inspired by that shared mythology.</p></details>
-    </section>
-
-    <footer>
-      <a class="cta" href="./play/">▶ Enter the Backrooms</a>
-      <p>Open Backrooms is free and open source. Built with three.js, Blender and Web Audio. Not affiliated with any Backrooms film or wiki project.</p>
-    </footer>
-
-    <script type="module" src="./src/site/site.ts"></script>
+    <canvas id="c" tabindex="0"></canvas>
+    <div id="ui"></div>
+    <script type="module" src="./src/game/main.ts"></script>
   </body>
 </html>
