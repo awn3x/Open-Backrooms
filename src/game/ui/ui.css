@@ -164,3 +164,11 @@ button { font: inherit; color: inherit; }
   #menu .col { padding: 5vh 6vw; }
   .mbtn { font-size: 28px; }
 }
+
+.ping-mark { position: absolute; left: 0; top: 0; display: flex; align-items: center; gap: 6px; margin: -14px 0 0 -14px; pointer-events: none; font: 600 12px var(--osd); letter-spacing: 0.06em; color: var(--ink); text-shadow: 0 1px 3px rgba(0,0,0,0.8); transition: opacity 0.2s; }
+.ping-mark i { font-style: normal; width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; border: 2px solid currentColor; background: rgba(0,0,0,0.45); font-size: 14px; }
+.ping-mark b { font-weight: 400; color: var(--dim); }
+.ping-mark.threat { color: #ff6a55; }
+.ping-mark.item { color: #9fd8ff; }
+.ping-mark.exit { color: #9dff9d; }
+#ui.scaring .ping-mark { visibility: hidden; }

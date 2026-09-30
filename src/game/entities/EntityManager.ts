@@ -484,7 +484,7 @@ export class EntityManager {
       }
       case 'watcher': {
         // moves only when no one is looking
-        const watched = this.visibleToCamera(e.pos, 1.6) || this.remoteTargets().some((t) => t.lit && Math.hypot(t.x - e.pos.x, t.z - e.pos.z) < 15 && losTo(t));
+        const watched = this.visibleToCamera(e.pos, 1.6) || [...this.remoteTargets(), ...this.game.bots.targets()].some((t) => t.alive && t.lit && Math.hypot(t.x - e.pos.x, t.z - e.pos.z) < 15 && losTo(t));
         if (nearest) {
           e.goal = { x: nearest.x, z: nearest.z };
           if (!watched) {
