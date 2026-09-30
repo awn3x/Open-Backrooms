@@ -247,7 +247,7 @@ export class UI {
         <button class="btn primary go-public">JOIN PUBLIC WORLD</button>
       </div>
       <div data-p="create" class="hidden">
-        <div class="field"><label>Room name (becomes your invite link)</label><input type="text" class="rname" maxlength="32" placeholder="e.g. calders-basement"></div>
+        <div class="field"><label>Room name (becomes your invite link)</label><input type="text" class="rname" maxlength="32" placeholder="e.g. level-zero-crew"></div>
         <div class="field"><label>Password (optional)</label><input type="password" class="rpass" maxlength="40"></div>
         <button class="btn primary go-create">CREATE &amp; ENTER</button>
       </div>
@@ -320,6 +320,7 @@ export class UI {
         ${this.slider('motionBlur', 'Motion blur', 0, 1.2, 0.05)}
         ${this.slider('headBob', 'Head motion', 0, 1.5, 0.05)}
         ${this.check('showFps', 'Show FPS')}
+        ${this.check('reduceFlashes', 'Reduce flashes and screen shake (jumpscares)')}
       </div>
       <div data-p="audio" class="hidden">
         ${this.slider('master', 'Master', 0, 1, 0.05)}

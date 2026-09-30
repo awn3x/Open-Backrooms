@@ -106,7 +106,7 @@ void main() {
 
 const VHS = /* glsl */ `
 uniform sampler2D tSrc; uniform vec2 uRes; uniform float uTime; uniform float uAmt; uniform float uGrain;
-uniform float uGlitch; uniform float uVignette; uniform float uHaze; uniform float uSharpen; uniform float uFxaa;
+uniform float uGlitch; uniform float uVignette; uniform float uHaze; uniform float uSharpen; uniform float uFxaa; uniform float uShock;
 varying vec2 vUv;
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 float luma(vec3 c) { return sqrt(dot(c, vec3(0.299, 0.587, 0.114))); }
@@ -150,15 +150,18 @@ void main() {
   vec3 wgt = -amp * mix(0.125, 0.2, uSharpen);
   col = clamp((col + (n + s2 + e + w) * wgt) / (1.0 + 4.0 * wgt), 0.0, 1.0);
   // very faint tape character: slight chroma offset toward the edges
-  float ca = (0.0006 + 0.004 * uGlitch) * uAmt;
-  col.r = mix(col.r, texture2D(tSrc, uv + cc * ca).r, 0.5 * uAmt);
-  col.b = mix(col.b, texture2D(tSrc, uv - cc * ca).b, 0.5 * uAmt);
+  float ca = (0.0006 + 0.004 * uGlitch) * uAmt + 0.03 * uShock;
+  float cm = clamp(0.5 * uAmt + uShock, 0.0, 1.0);
+  col.r = mix(col.r, texture2D(tSrc, uv + cc * ca).r, cm);
+  col.b = mix(col.b, texture2D(tSrc, uv - cc * ca).b, cm);
   // fine film grain, strongest in shadows
   float g = hash(uv * uRes + fract(uTime * 7.13) * 100.0) - 0.5;
   float lum = dot(col, vec3(0.299, 0.587, 0.114));
   col += g * uGrain * (0.025 + 0.04 * (1.0 - lum));
   float v = smoothstep(0.9, 0.25, length(cc * vec2(1.0, 0.8)));
   col *= mix(1.0, v, uVignette);
+  // jumpscare impact frame: blown-out flash with a red cast at the edges
+  col = mix(col, vec3(1.0, 0.93, 0.88) * mix(1.0, 0.55, 1.0 - v) + vec3(0.3, 0.0, 0.0) * (1.0 - v), clamp(uShock, 0.0, 1.0) * 0.85);
   gl_FragColor = vec4(sRGBTransferOETF(vec4(max(col, 0.0), 1.0)).rgb, 1.0);
 }`;
 
@@ -243,6 +246,7 @@ export class Post {
     uAmt: { value: 0.5 },
     uGrain: { value: 1 },
     uGlitch: { value: 0 },
+    uShock: { value: 0 },
     uVignette: { value: 0.25 },
     uSharpen: { value: 0.5 },
     uFxaa: { value: 1 },
