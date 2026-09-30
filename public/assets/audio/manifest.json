@@ -1,0 +1,222 @@
+{
+ "step_carpet": [
+  "step_carpet_0",
+  "step_carpet_1",
+  "step_carpet_2",
+  "step_carpet_3",
+  "step_carpet_4",
+  "step_carpet_5",
+  "step_carpet_6",
+  "step_carpet_7"
+ ],
+ "step_concrete": [
+  "step_concrete_0",
+  "step_concrete_1",
+  "step_concrete_2",
+  "step_concrete_3",
+  "step_concrete_4",
+  "step_concrete_5",
+  "step_concrete_6",
+  "step_concrete_7"
+ ],
+ "step_metal": [
+  "step_metal_0",
+  "step_metal_1",
+  "step_metal_2",
+  "step_metal_3",
+  "step_metal_4",
+  "step_metal_5",
+  "step_metal_6",
+  "step_metal_7"
+ ],
+ "step_water": [
+  "step_water_0",
+  "step_water_1",
+  "step_water_2",
+  "step_water_3",
+  "step_water_4",
+  "step_water_5"
+ ],
+ "land_carpet": [
+  "land_carpet"
+ ],
+ "land_concrete": [
+  "land_concrete"
+ ],
+ "land_metal": [
+  "land_metal"
+ ],
+ "cloth": [
+  "cloth_0",
+  "cloth_1",
+  "cloth_2",
+  "cloth_3",
+  "cloth_4"
+ ],
+ "breath_calm": [
+  "breath_calm"
+ ],
+ "breath_tired": [
+  "breath_tired"
+ ],
+ "breath_panic": [
+  "breath_panic"
+ ],
+ "heartbeat": [
+  "heartbeat"
+ ],
+ "tinnitus": [
+  "tinnitus"
+ ],
+ "tube_flicker": [
+  "tube_flicker_0",
+  "tube_flicker_1",
+  "tube_flicker_2",
+  "tube_flicker_3"
+ ],
+ "ballast_click": [
+  "ballast_click"
+ ],
+ "power_down": [
+  "power_down"
+ ],
+ "power_up": [
+  "power_up"
+ ],
+ "spark": [
+  "spark_0",
+  "spark_1",
+  "spark_2",
+  "spark_3"
+ ],
+ "outlet_buzz": [
+  "outlet_buzz"
+ ],
+ "hum": [
+  "hum"
+ ],
+ "amb_l0": [
+  "amb_l0"
+ ],
+ "amb_l1": [
+  "amb_l1"
+ ],
+ "amb_l2": [
+  "amb_l2"
+ ],
+ "tape_hiss": [
+  "tape_hiss"
+ ],
+ "knock": [
+  "knock_0",
+  "knock_1",
+  "knock_2"
+ ],
+ "slam": [
+  "slam"
+ ],
+ "howl": [
+  "howl_0",
+  "howl_1"
+ ],
+ "running": [
+  "running"
+ ],
+ "pipe_groan": [
+  "pipe_groan_0",
+  "pipe_groan_1",
+  "pipe_groan_2"
+ ],
+ "steam_hiss": [
+  "steam_hiss"
+ ],
+ "drip": [
+  "drip_0",
+  "drip_1",
+  "drip_2",
+  "drip_3"
+ ],
+ "crawler_click": [
+  "crawler_click_0",
+  "crawler_click_1",
+  "crawler_click_2",
+  "crawler_click_3"
+ ],
+ "crawler_rasp": [
+  "crawler_rasp"
+ ],
+ "crawler_scream": [
+  "crawler_scream"
+ ],
+ "crawler_step": [
+  "crawler_step_0",
+  "crawler_step_1",
+  "crawler_step_2",
+  "crawler_step_3"
+ ],
+ "watcher_drone": [
+  "watcher_drone"
+ ],
+ "smiler_drone": [
+  "smiler_drone"
+ ],
+ "smiler_hiss": [
+  "smiler_hiss"
+ ],
+ "dweller_knock": [
+  "dweller_knock_0",
+  "dweller_knock_1",
+  "dweller_knock_2"
+ ],
+ "dweller_groan": [
+  "dweller_groan"
+ ],
+ "sting_spot": [
+  "sting_spot"
+ ],
+ "sting_chase": [
+  "sting_chase"
+ ],
+ "bottle_open": [
+  "bottle_open"
+ ],
+ "drink": [
+  "drink"
+ ],
+ "ui_click": [
+  "ui_click"
+ ],
+ "ui_hover": [
+  "ui_hover"
+ ],
+ "vhs_insert": [
+  "vhs_insert"
+ ],
+ "static_burst": [
+  "static_burst"
+ ],
+ "death": [
+  "death"
+ ],
+ "door_open": [
+  "door_open"
+ ],
+ "hatch_open": [
+  "hatch_open"
+ ],
+ "elevator_ding": [
+  "elevator_ding"
+ ],
+ "elevator_doors": [
+  "elevator_doors"
+ ],
+ "ir_l0": [
+  "ir_l0"
+ ],
+ "ir_l1": [
+  "ir_l1"
+ ],
+ "ir_l2": [
+  "ir_l2"
+ ]
+}
