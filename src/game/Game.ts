@@ -56,6 +56,9 @@ export class Game {
   net: Net | null = null;
   ui!: UI;
   mode: Mode = 'solo';
+  /** escape run (0 -> 1 -> 2 -> ending) or endless (one level, no exit) */
+  runMode: 'escape' | 'endless' = 'escape';
+  startLevel = 0;
   roomSeed = 0;
   run = 0;
   level = 0;
@@ -191,6 +194,7 @@ export class Game {
     }
     this.player.collider = this.collider;
     this.objects = new WorldObjects(world, this.collider);
+    this.objects.noExit = this.runMode === 'endless' && !this.menuMode;
     this.scene.add(this.objects.root);
     world.onChunkLoaded = (c) => void this.objects?.syncChunk(c);
     world.onChunkUnloaded = (c) => this.objects?.unloadChunk(c);
@@ -599,8 +603,8 @@ export class Game {
     this.endScare();
     this.run++;
     this.sanity = 0.8;
-    this.ui?.toast('You wake up back at the base.');
-    await this.enterLevel(0);
+    this.ui?.toast(this.startLevel === 0 ? 'You wake up back at the base.' : `You wake up at the start of ${LEVELS[this.startLevel].name}.`);
+    await this.enterLevel(this.startLevel);
   }
 
   private until(cond: () => boolean) {

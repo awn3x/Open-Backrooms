@@ -16,6 +16,7 @@
   "dependencies": {
     "@fontsource/inter": "^5.3.0",
     "@fontsource/vt323": "^5.3.0",
+    "@noble/secp256k1": "^3.2.0",
     "@trystero-p2p/torrent": "^0.25.4",
     "postprocessing": "^6.39.5",
     "three": "^0.186.1",

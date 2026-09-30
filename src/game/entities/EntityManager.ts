@@ -545,7 +545,22 @@ export class EntityManager {
     return this.list.map((e) => ({ i: e.id, k: e.kind, x: +e.pos.x.toFixed(2), z: +e.pos.z.toFixed(2), y: +e.yaw.toFixed(2), a: e.anim, v: +e.visible.toFixed(2), m: e.mimicName || undefined }));
   }
 
-  async applySnapshot(snaps: EntitySnap[]) {
+  private lastSnap = 0;
+  /**
+   * Apply the level authority's entity state. The authority is just another player's browser, so
+   * nothing is trusted: bad kinds/values are dropped, entities can't move faster than they could
+   * run, and new ones can't be spawned right on top of the local player.
+   */
+  async applySnapshot(raw: unknown) {
+    if (!Array.isArray(raw)) return;
+    const now = performance.now();
+    const dt = Math.min(2, Math.max(0.05, (now - this.lastSnap) / 1000));
+    this.lastSnap = now;
+    const KINDS = ['crawler', 'dweller', 'watcher', 'smiler', 'mimic'];
+    const me = this.game.player.pos;
+    const snaps = (raw.slice(0, 16) as EntitySnap[]).filter(
+      (s) => s && Number.isInteger(s.i) && KINDS.includes(s.k) && [s.x, s.z, s.y, s.v].every((n) => typeof n === 'number' && Number.isFinite(n)) && Math.abs(s.x) < 1e5 && Math.abs(s.z) < 1e5,
+    );
     const ids = new Set(snaps.map((s) => s.i));
     for (const e of [...this.list])
       if (!ids.has(e.id)) {
@@ -555,14 +570,21 @@ export class EntityManager {
     for (const s of snaps) {
       let e = this.list.find((x) => x.id === s.i);
       if (!e) {
+        if (Math.hypot(s.x - me.x, s.z - me.z) < 6) continue;
         e = await this.spawn(s.k, s.x, s.z);
         this.nextId--;
         e.id = s.i;
       }
-      e.netTarget.set(s.x, 0, s.z);
+      // speed limit: fastest entity runs ~5.6 m/s
+      const dx = s.x - e.netTarget.x;
+      const dz = s.z - e.netTarget.z;
+      const d = Math.hypot(dx, dz);
+      const maxStep = 7 * dt + 0.5;
+      const k = d > maxStep && e.netTarget.lengthSq() > 0 ? maxStep / d : 1;
+      e.netTarget.set(e.netTarget.lengthSq() > 0 ? e.netTarget.x + dx * k : s.x, 0, e.netTarget.lengthSq() > 0 ? e.netTarget.z + dz * k : s.z);
       e.yaw = s.y;
-      e.visible = s.v;
-      if (s.a) e.play(s.a);
+      e.visible = Math.max(0, Math.min(1, s.v));
+      if (typeof s.a === 'string' && e.actions.has(s.a)) e.play(s.a);
       e.state = s.a === 'crawl' || s.a === 'run' || s.a === 'lunge' ? 'chase' : 'wander';
     }
   }
