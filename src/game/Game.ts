@@ -15,7 +15,7 @@ import { Post } from './render/Post';
 import { LightRig, powerAt } from './render/Lights';
 import { Sparks } from './render/Sparks';
 import { Player, type StepEvent } from './player/Player';
-import { AudioEngine, LayerBed, type Voice } from './audio/AudioEngine';
+import { AudioEngine, type Voice } from './audio/AudioEngine';
 import { loadProtos, setMaxAnisotropy } from './assets';
 import type { Protos } from './world/mesher';
 import { WorldObjects, HUB_CENTER, type Interactable } from './WorldObjects';
@@ -63,7 +63,8 @@ export class Game {
   menuMode = false;
   sanity = 1;
   private clock = new THREE.Timer();
-  private breath: LayerBed;
+  private breathT = 0;
+  private breathOut = -1;
   private ambience: Voice[] = [];
   private hum: (Voice | null)[] = [];
   private heartT = 0;
@@ -91,7 +92,6 @@ export class Game {
     this.scene.add(this.camera);
     this.entities = new EntityManager(this);
     this.bots = new Bots(this);
-    this.breath = new LayerBed(this.audio, ['breath_calm', 'breath_tired', 'breath_panic']);
     window.addEventListener('resize', () => this.resize());
   }
 
@@ -132,8 +132,8 @@ export class Game {
     await this.audio.init();
     await this.audio.preload([
       'step_carpet', 'step_concrete', 'step_metal', 'step_water', 'land_carpet', 'land_concrete', 'land_metal', 'cloth',
-      'breath_calm', 'breath_tired', 'breath_panic', 'heartbeat', 'hum', 'spark', 'tube_flicker', 'ballast_click',
-      'ui_click', 'ui_hover', 'vhs_insert', 'static_burst', 'tape_hiss', 'bottle_open', 'drink',
+      'breath_in', 'breath_out', 'breath_panic', 'heartbeat', 'hum', 'spark', 'tube_flicker', 'ballast_click',
+      'ui_click', 'ui_hover', 'static_burst', 'bottle_open', 'drink',
     ]);
     progress(0.8, 'Almost there');
     void this.audio.preload(['knock', 'slam', 'howl', 'running', 'drip', 'power_down', 'power_up', 'crawler_click', 'crawler_rasp', 'crawler_scream', 'crawler_step', 'watcher_drone', 'smiler_drone', 'smiler_hiss', 'sting_spot', 'sting_chase', 'death', 'door_open', 'hatch_open', 'elevator_ding', 'elevator_doors', 'pipe_groan', 'steam_hiss', 'dweller_knock', 'dweller_groan', 'tinnitus', 'outlet_buzz']);
@@ -385,10 +385,23 @@ export class Game {
 
   private updateAudio(dt: number, zone: number, safe: boolean, threat: number) {
     const p = this.player;
-    // breathing layers
-    const tired = clamp((1 - p.stamina) * 1.3, 0, 1);
-    const panic = clamp(p.fear * 1.3 - 0.2, 0, 1);
-    this.breath.update({ breath_calm: (1 - tired) * (1 - panic) * 0.18, breath_tired: tired * (1 - panic) * 0.55, breath_panic: panic * 0.6 });
+    // breathing: only when winded or frightened; each breath is a separate take, paced by exertion
+    const winded = clamp(((1 - p.stamina) - 0.25) / 0.75, 0, 1);
+    const scared = clamp((p.fear - 0.35) / 0.65, 0, 1);
+    const need = Math.max(winded, scared);
+    if (need > 0.02 && p.alive && !this.menuMode) {
+      this.breathT -= dt;
+      const period = 2.8 - need * 1.9;
+      if (this.breathT <= 0) {
+        this.breathT = period * (0.9 + Math.random() * 0.2);
+        this.breathOut = period * 0.42;
+        this.audio.play('breath_in', { gain: 0.08 + need * 0.2, rate: 0.96 + Math.random() * 0.08 });
+      }
+      if (this.breathOut > 0) {
+        this.breathOut -= dt;
+        if (this.breathOut <= 0) this.audio.play(scared > 0.5 && Math.random() < 0.5 ? 'breath_panic' : 'breath_out', { gain: 0.1 + need * 0.24, rate: 0.95 + Math.random() * 0.08 });
+      }
+    } else this.breathT = Math.min(this.breathT, 0.4);
     // heartbeat
     if (p.fear > 0.35) {
       this.heartT -= dt;
@@ -406,7 +419,7 @@ export class Game {
       }
       if (v) {
         v.setPos(s.light.position.x, s.light.position.y, s.light.position.z);
-        const lvl = LEVELS[this.level].id === 0 ? 0.16 : 0.08;
+        const lvl = LEVELS[this.level].id === 0 ? 0.1 : 0.06;
         v.gain.gain.setTargetAtTime(s.light.intensity > 0.01 ? lvl * Math.min(1, s.light.intensity / 6) : 0, this.audio.ctx.currentTime, 0.05);
       }
     });

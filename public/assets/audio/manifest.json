@@ -53,14 +53,33 @@
   "cloth_3",
   "cloth_4"
  ],
- "breath_calm": [
-  "breath_calm"
+ "breath_in": [
+  "breath_in_0",
+  "breath_in_1",
+  "breath_in_2",
+  "breath_in_3",
+  "breath_in_4",
+  "breath_in_5",
+  "breath_in_6",
+  "breath_in_7"
  ],
- "breath_tired": [
-  "breath_tired"
+ "breath_out": [
+  "breath_out_0",
+  "breath_out_1",
+  "breath_out_2",
+  "breath_out_3",
+  "breath_out_4",
+  "breath_out_5",
+  "breath_out_6",
+  "breath_out_7"
  ],
  "breath_panic": [
-  "breath_panic"
+  "breath_panic_0",
+  "breath_panic_1",
+  "breath_panic_2",
+  "breath_panic_3",
+  "breath_panic_4",
+  "breath_panic_5"
  ],
  "heartbeat": [
   "heartbeat"
@@ -103,9 +122,6 @@
  ],
  "amb_l2": [
   "amb_l2"
- ],
- "tape_hiss": [
-  "tape_hiss"
  ],
  "knock": [
   "knock_0",
@@ -188,9 +204,6 @@
  ],
  "ui_hover": [
   "ui_hover"
- ],
- "vhs_insert": [
-  "vhs_insert"
  ],
  "static_burst": [
   "static_burst"
