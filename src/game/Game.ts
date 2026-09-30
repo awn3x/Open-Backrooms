@@ -262,7 +262,9 @@ export class Game {
     if (!this.running) return;
     requestAnimationFrame(this.loop);
     this.clock.update();
-    const dt = Math.min(this.clock.getDelta(), 1 / 20);
+    const raw = this.clock.getDelta();
+    this.debug.fps = this.debug.fps * 0.95 + (1 / Math.max(raw, 1e-3)) * 0.05;
+    const dt = Math.min(raw, 1 / 20);
     this.frame(dt);
   };
 
@@ -373,7 +375,6 @@ export class Game {
     }
     this.renderer.info.reset();
     this.post.render(this.scene, this.camera, this.time);
-    this.debug.fps = this.debug.fps * 0.95 + (1 / Math.max(dt, 1e-3)) * 0.05;
     this.debug.calls = this.renderer.info.render.calls;
     this.debug.tris = this.renderer.info.render.triangles;
     this.ui?.update(dt);

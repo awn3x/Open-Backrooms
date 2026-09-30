@@ -32,6 +32,7 @@ let busy = false;
 async function launch(kind: 'solo' | 'ai' | 'online', seed: string, label: string) {
   game.menuMode = false;
   game.mode = kind;
+  game.entities.authority = true;
   game.run = 0;
   game.bots.enabled = false;
   for (const b of game.bots.list) b.avatar.dispose();
