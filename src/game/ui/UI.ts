@@ -320,6 +320,7 @@ export class UI {
         ${this.slider('motionBlur', 'Motion blur', 0, 1.2, 0.05)}
         ${this.slider('headBob', 'Head motion', 0, 1.5, 0.05)}
         ${this.check('showFps', 'Show FPS')}
+        ${this.check('reduceFlashes', 'Reduce flashes and screen shake (jumpscares)')}
       </div>
       <div data-p="audio" class="hidden">
         ${this.slider('master', 'Master', 0, 1, 0.05)}

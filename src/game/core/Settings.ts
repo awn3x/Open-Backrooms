@@ -22,6 +22,7 @@ export interface Settings {
   profanityFilter: boolean;
   showFps: boolean;
   rawInput: boolean;
+  reduceFlashes: boolean;
 }
 
 export const DEFAULTS: Settings = {
@@ -43,6 +44,7 @@ export const DEFAULTS: Settings = {
   profanityFilter: true,
   showFps: false,
   rawInput: false,
+  reduceFlashes: false,
 };
 
 function read<T>(key: string, fallback: T): T {

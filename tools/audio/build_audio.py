@@ -654,21 +654,6 @@ def crawler_rasp():
     return norm(loopify(y, 0.4), -6)
 
 
-def crawler_scream():
-    """A torn, human-ish shriek: jittery glottal pulses through shifting formants, distorted."""
-    d = 1.6
-    n = int(d * SR)
-    r = np.random.default_rng(55)
-    f0 = (380 + 520 * np.clip(np.linspace(0, 1, n) / 0.25, 0, 1)) * (1 + 0.05 * lp(r.standard_normal(n), 12) * 8)
-    ph = np.cumsum(f0) / SR
-    pulses = np.clip(np.sin(2 * np.pi * ph), 0, 1) ** 4 + r.standard_normal(n) * 0.35
-    k = np.linspace(0, 1, n)
-    y = peak(pulses, 900, 5) * (1 - k) + peak(pulses, 1300, 5) * k + peak(pulses, 2900, 6) * 0.8 + peak(pulses, 3700, 7) * 0.5
-    y = np.tanh(y * 2.5) * env_ar(n, 0.015, 0.7)
-    rough = bp(white(d), 2000, 8000) * env_ar(n, 0.01, 0.9) * 0.4
-    return norm(conv(y + rough, OFFICE_IR, 0.35), -1)
-
-
 def crawler_step(i):
     x = np.zeros(int(0.35 * SR))
     place(x, lp(white(0.05), 200) * env_exp(0.05, 0.01), 0)
@@ -688,25 +673,6 @@ def drone(freqs, d=20, noise_amt=0.2, crackle=0.0, lpf=400):
         x += hp(imp, 1500) * 3
     x *= 0.7 + 0.3 * np.sin(2 * np.pi * tt / d * 3)
     return norm(loopify(x, 1.0), -4)
-
-
-def sting(kind):
-    d = 3.0
-    tt = t(d)
-    x = np.zeros_like(tt)
-    if kind == "spot":
-        for f in (110, 116.5, 155, 233, 247):
-            x += signal.sawtooth(2 * np.pi * f * tt) * 0.3
-        x = lp(x, 2500) * env_exp(d, 0.9, 0.005)
-        x += np.sin(2 * np.pi * np.cumsum(np.linspace(80, 30, len(tt))) / SR) * env_exp(d, 0.6) * 1.2
-        scr = np.sin(2 * np.pi * np.cumsum(np.linspace(2600, 3400, len(tt))) / SR) * env_exp(d, 0.5) * 0.15
-        x += scr
-    else:  # chase pulse
-        for k in range(8):
-            p = np.sin(2 * np.pi * 45 * t(0.3)) * env_exp(0.3, 0.08) + lp(white(0.3), 150) * env_exp(0.3, 0.04)
-            place(x, p, k * 0.375)
-        x += signal.sawtooth(2 * np.pi * np.cumsum(np.linspace(220, 330, len(tt))) / SR) * 0.08 * np.clip(tt / d, 0, 1)
-    return norm(conv(x, BIG_IR, 0.3), -1)
 
 
 def smiler_hiss():
@@ -742,6 +708,216 @@ def dweller_groan():
     return norm(conv(x, OFFICE_IR, 0.4), -3)
 
 
+# ------------------------------------------------------------------ scares
+def strings(d, notes, attack=0.01, decay=0.35, sustain=0.45, release=0.6, ponticello=0.0, voices=6, gliss=0.0, tremolo=0.0, seed=0, fade=0.0):
+    """Bowed string section: detuned voices with vibrato/jitter, bow noise and body resonances.
+    ponticello pushes energy into the glassy upper partials; gliss bends pitch by that ratio over d."""
+    r = np.random.default_rng(seed)
+    n = int(d * SR)
+    tt = np.arange(n) / SR
+    out = np.zeros(n)
+    bend = 1 + gliss * (tt / d) ** 1.5
+    for f in notes:
+        for _ in range(voices):
+            det = 2 ** (r.uniform(-14, 14) / 1200)
+            vib = 1 + 0.0035 * np.sin(2 * np.pi * r.uniform(4.8, 6.2) * tt + r.uniform(0, 6)) * np.clip(tt / 0.4, 0, 1)
+            jit = 1 + 0.004 * lp(r.standard_normal(n), 18) * 12
+            fi = f * det * vib * jit * bend
+            ph = 2 * np.pi * np.cumsum(fi) / SR
+            kmax = int(min(40, 9000 / f))
+            v = np.zeros(n)
+            for k in range(1, kmax + 1):
+                a = (1 / k) * r.uniform(0.6, 1.2) * (1 + ponticello * 3 * (k > 4) * min(1, k / 12))
+                v += a * np.sin(k * ph + r.uniform(0, 6))
+            out += v * r.uniform(0.7, 1.0)
+    out /= np.abs(out).max() + 1e-9
+    bow = bp(r.standard_normal(n), 1500, 8000) * (0.04 + 0.1 * ponticello)
+    body = out * 0.5 + peak(out, 280, 3) * 0.6 + peak(out, 460, 4) * 0.5 + peak(out, 1050, 5) * 0.35 + peak(out, 2600, 4) * (0.25 + ponticello)
+    if ponticello:
+        body += hp(out, 2500) * ponticello * 1.5
+    y = lp(body + bow, 11000)
+    na = max(1, int(attack * SR))
+    env = np.ones(n) * sustain
+    env[:na] = np.linspace(0, 1, na) ** 1.5
+    nd = int(decay * SR)
+    seg = env[na:na + nd]
+    env[na:na + nd] = sustain + (1 - sustain) * np.exp(-np.linspace(0, 4, len(seg)))
+    nr = int(release * SR)
+    env[-nr:] *= np.linspace(1, 0, nr) ** 2
+    if fade:
+        env[na:] *= np.exp(-(tt[na:] - tt[na]) / fade)
+    if tremolo:
+        env *= 1 - 0.5 * (0.5 + 0.5 * np.sin(2 * np.pi * tremolo * tt))
+    return y * env
+
+
+def impact(seed, size=1.0, metal=0.8):
+    """Layered film hit: pitch-dropping sub, drywall/wood slam, inharmonic metal crash, transient crack."""
+    r = np.random.default_rng(seed)
+    d = 3.5
+    n = int(d * SR)
+    tt = np.arange(n) / SR
+    f = 26 + 38 * np.exp(-tt / (0.18 * size))
+    sub = np.tanh(np.sin(2 * np.pi * np.cumsum(f) / SR) * 2.2) * np.exp(-tt / (0.75 * size))
+    slam = lp(r.standard_normal(n), 900) * np.exp(-tt / 0.07) * 1.6
+    slam += modal(d, [r.uniform(80, 100), r.uniform(130, 160), r.uniform(200, 240), r.uniform(310, 360)], [0.25, 0.18, 0.12, 0.08], [1, 0.8, 0.6, 0.4])
+    b = r.uniform(170, 260)
+    ratios = [1, 1.47, 2.09, 2.56, 3.14, 3.9, 4.22, 5.4, 6.8, 8.1, 9.7]
+    mt = modal(d, [b * q * r.uniform(0.98, 1.02) for q in ratios], [r.uniform(0.25, 0.9) / (1 + 0.12 * j) for j in range(len(ratios))], [r.uniform(0.3, 1) / (1 + 0.15 * i) for i in range(len(ratios))])
+    mt = hp(mt, 150) * metal
+    crack = hp(r.standard_normal(int(0.03 * SR)), 1200) * env_exp(0.03, 0.005) * 2.5
+    x = sub * 1.3 + slam * 0.7 + mt * 0.6
+    place(x, crack, 0.0)
+    x = conv(x, BIG_IR, 0.45)[:n]
+    return np.tanh(x / (np.abs(x).max() + 1e-9) * 1.8)
+
+
+def reverse_swell(src, d):
+    """Reversed reverb bloom of `src`, rising over d seconds and stopping dead at the end."""
+    wet = conv(src, BIG_IR, 1.0, 0.0)
+    wet = wet[::-1][-int(d * SR):]
+    k = np.linspace(0, 1, len(wet))
+    return wet * k ** 2.2
+
+
+def scream(seed, style=0, d=1.8):
+    """Creature scream: LF-ish glottal source with jitter/shimmer, subharmonic roar, breath noise,
+    moving throat/mouth formants and an ingressive gasp before it."""
+    r = np.random.default_rng(seed)
+    n = int(d * SR)
+    k = np.linspace(0, 1, n)
+    wob = lp(r.standard_normal(n), 9) * 30
+    if style == 0:   # rising shriek that cracks at the end
+        f0 = 420 + 620 * np.clip(k / 0.18, 0, 1) - 380 * np.clip((k - 0.75) / 0.25, 0, 1)
+        F = ([850, 1350, 2900, 3900], [1000, 1900, 3200, 4200]); sub, drive, br = 0.25, 2.8, 0.35
+    elif style == 1:  # broken wail: pitch sobbing, voice breaking in and out
+        f0 = 560 + 140 * np.sin(2 * np.pi * 2.6 * k * d) + 200 * k
+        F = ([750, 1200, 2700, 3700], [900, 1500, 3000, 4000]); sub, drive, br = 0.15, 2.2, 0.45
+    elif style == 2:  # guttural roar
+        f0 = 120 + 60 * np.clip(k / 0.2, 0, 1) - 30 * k
+        F = ([520, 950, 2400, 3300], [650, 1100, 2600, 3500]); sub, drive, br = 0.7, 4.5, 0.3
+    else:             # clicking fry accelerating into a shriek
+        f0 = 35 + 900 * np.clip((k - 0.25) / 0.2, 0, 1) ** 1.5
+        F = ([800, 1300, 2800, 3800], [950, 1700, 3100, 4100]); sub, drive, br = 0.3, 3.0, 0.35
+    f0 = f0 * (1 + 0.06 * np.sin(2 * np.pi * r.uniform(5, 8) * k * d + r.uniform(0, 6)) * np.clip(k / 0.2, 0, 1))
+    f0 = f0 * (1 + 0.035 * lp(r.standard_normal(n), 25) * 14) * (1 + 0.02 * lp(r.standard_normal(n), 120) * 25)
+    brk = np.ones(n)
+    for _ in range(r.integers(2, 5)):  # yodel-like register breaks
+        a = r.uniform(0.2, 0.9)
+        brk *= 1 + r.choice([-0.25, 0.3]) * ((k > a) & (k < a + r.uniform(0.04, 0.12)))
+    f0 = np.maximum(20, lp(f0 * brk, 60) + wob)
+    ph = np.cumsum(f0) / SR
+    p = ph % 1.0
+    glot = np.where(p < 0.6, 0.5 * (1 - np.cos(np.pi * p / 0.6)), np.cos(0.5 * np.pi * (p - 0.6) / 0.25).clip(0))
+    src = np.diff(glot, prepend=0) * SR / 800
+    src *= 1 + sub * np.sign(np.sin(np.pi * ph))            # period doubling
+    src *= 1 + 0.25 * lp(r.standard_normal(n), 60) * 6       # shimmer
+    src *= 1 + 0.35 * np.sin(2 * np.pi * r.uniform(35, 60) * np.arange(n) / SR) * (style == 2)  # growl flutter
+    if style == 1:
+        src *= np.clip(0.4 + np.sin(2 * np.pi * 3.3 * k * d + 1) * 2, 0, 1)
+    breath = bp(r.standard_normal(n), 900, 7000) * br * 6
+    ex = src + breath * (0.4 + 0.6 * np.abs(np.sin(np.pi * ph * 0.5)))
+    y = np.zeros(n)
+    br *= 1.6
+    breath = breath * 1.6
+    ex = src + breath * (0.4 + 0.6 * np.abs(np.sin(np.pi * ph * 0.5)))
+    for (a, b), g, q in zip(zip(*F), (1.0, 0.8, 0.7, 0.45), (2.2, 2.8, 3.5, 4.5)):
+        y += peak(ex, a, q) * g * (1 - k) + peak(ex, b, q) * g * k
+    y += hp(ex, 3500) * 0.15
+    y = np.tanh(y / (np.abs(y).max() + 1e-9) * drive)
+    y *= env_ar(n, 0.02, 0.35 if style != 0 else 0.5)
+    # ingressive gasp
+    gl = 0.28
+    gasp = bp(r.standard_normal(int(gl * SR)), 700, 4500) * np.linspace(0, 1, int(gl * SR)) ** 2
+    gasp = peak(gasp, r.uniform(1100, 1500), 3) + gasp * 0.4
+    out = np.zeros(int(gl * SR) + n)
+    place(out, gasp * 0.35, 0.0)
+    place(out, y, gl + 0.03)
+    return out
+
+
+def _master(x, drive=1.4, peak_db=-0.5):
+    x = np.tanh(x / (np.abs(x).max() + 1e-9) * drive)
+    return norm(x, peak_db)
+
+
+STING_PRE = 0.5  # seconds of lead-in before the hit in every sting_* file (the game schedules to it)
+
+
+def sting_crawler(i):
+    r = np.random.default_rng(300 + i)
+    d = STING_PRE + 3.2
+    x = np.zeros(int(d * SR))
+    hit = impact(310 + i, size=1.0 + 0.15 * i, metal=0.7)
+    low = strings(2.8, [r.choice([55, 58.3, 61.7]) * m for m in (1, 1.06, 1.5)], 0.008, 0.25, 0.3, 0.8, 0.1, 5, seed=320 + i, fade=0.9)
+    high = strings(2.6, [r.uniform(700, 900) * m for m in (1, 1.059, 1.122, 1.414)], 0.005, 0.15, 0.25, 0.8, 0.5, 5, gliss=-0.08, seed=330 + i, fade=0.5)
+    stab = mix(hit, low * 0.8, high * 0.55)
+    place(x, reverse_swell(stab, STING_PRE) * 1.0, 0.0)
+    place(x, stab, STING_PRE)
+    return _master(x, 1.25)
+
+
+def sting_watcher(i):
+    r = np.random.default_rng(400 + i)
+    d = 4.2
+    x = np.zeros(int(d * SR))
+    cl = strings(d, [r.uniform(900, 1100) * m for m in (1, 1.059, 1.189, 1.26)], 2.8, 0.1, 1.0, 0.6, 0.6, 6, gliss=0.05, tremolo=11 + i * 2, seed=410 + i)
+    sub = np.sin(2 * np.pi * np.cumsum(np.linspace(31, 27, len(x))) / SR) * np.linspace(0, 1, len(x)) ** 2
+    lo = strings(d, [r.choice([49, 51.9]) * m for m in (1, 1.414)], 3.0, 0.1, 1.0, 0.5, 0.2, 4, seed=420 + i)
+    x += cl * 0.6 + sub * 0.5 + lo * 0.5
+    thud = impact(430 + i, size=0.6, metal=0.2)
+    place(x, thud * 0.5, d - 0.7)
+    return _master(x, 1.2, -1.5)
+
+
+def sting_smiler(i):
+    r = np.random.default_rng(500 + i)
+    d = STING_PRE + 3.0
+    x = np.zeros(int(d * SR))
+    inhale = hp(r.standard_normal(int(STING_PRE * SR)), 1800) * np.linspace(0, 1, int(STING_PRE * SR)) ** 3
+    place(x, inhale * 0.6, 0.0)
+    hit = impact(510 + i, size=0.8, metal=1.4)
+    scr = strings(2.6, [r.uniform(1300, 1600) * m for m in (1, 1.059, 1.414)], 0.004, 0.15, 0.3, 0.8, 0.7, 5, gliss=-0.12, seed=520 + i, fade=0.6)
+    place(x, mix(hit, scr * 0.6), STING_PRE)
+    return _master(lp(x, 9000), 1.25)
+
+
+def sting_mimic(i):
+    r = np.random.default_rng(600 + i)
+    d = STING_PRE + 3.0
+    x = np.zeros(int(d * SR))
+    b = breath_one("in", r, mouth=True, strength=1.0, voice=0.5)
+    b = signal.resample(b, int(len(b) / 0.62))[::-1]
+    b = b[-int(STING_PRE * SR):] if len(b) > STING_PRE * SR else b
+    place(x, norm(b, -6), STING_PRE - len(b) / SR)
+    hit = impact(610 + i, size=0.9, metal=0.5)
+    cl = strings(2.6, [r.uniform(180, 220) * m for m in (1, 1.189, 1.414, 1.498)], 0.006, 0.3, 0.3, 0.9, 0.3, 5, seed=620 + i, fade=0.8)
+    place(x, mix(hit, cl * 0.7), STING_PRE)
+    return _master(x, 1.25)
+
+
+def jumpscare(i):
+    """The catch: a close, dry scream + huge hit + shrieking strings, then a hard cut to silence."""
+    r = np.random.default_rng(700 + i)
+    d = 3.2
+    cut = 1.25
+    x = np.zeros(int(d * SR))
+    sc = scream(710 + i, style=[0, 2, 3, 0][i], d=1.4)
+    sc = sc[int(0.28 * SR):]  # no gasp: it's in your face
+    hit = impact(720 + i, size=1.3, metal=1.0)
+    shriek = strings(cut, [r.uniform(1100, 1400) * m for m in (1, 1.059, 1.122, 1.414)], 0.003, 0.3, 0.8, 0.02, 0.6, 6, gliss=0.15, seed=730 + i)
+    low = strings(cut, [r.choice([41.2, 43.7]) * m for m in (1, 1.06)], 0.003, 0.2, 0.6, 0.02, 0.2, 4, seed=740 + i)
+    body = mix(hit * 1.1, sc * 1.2, shriek * 0.6, low * 0.6)
+    body = _master(body, 2.2, -0.3)
+    nc = int(cut * SR)
+    body[nc - int(0.012 * SR):nc] *= np.linspace(1, 0, int(0.012 * SR))
+    body[nc:] = 0
+    place(x, body[: int(d * SR)], 0.0)
+    ring = bp(r.standard_normal(int(1.8 * SR)), 3900, 4300, 2) * np.linspace(1, 0, int(1.8 * SR)) ** 2 * 0.03
+    place(x, ring, cut + 0.35)
+    return x
+
+
 # ------------------------------------------------------------------ interactions & UI
 def bottle_open():
     x = np.zeros(int(0.8 * SR))
@@ -768,34 +944,6 @@ def ui_click():
 
 def ui_hover():
     return norm(modal(0.05, [1200], [0.006], [1]), -16)
-
-
-def vhs_insert():
-    x = np.zeros(int(2.2 * SR))
-    place(x, modal(0.3, [220, 900, 2400], [0.05, 0.03, 0.01], [1, 0.5, 0.3]), 0.0)
-    place(x, modal(0.3, [180, 700], [0.06, 0.02], [1, 0.4]), 0.35)
-    tt = t(1.4)
-    whir = (np.sin(2 * np.pi * np.cumsum(60 + 40 * np.clip(tt * 3, 0, 1)) / SR) * 0.3 + bp(white(1.4), 400, 2000) * 0.2) * env_ar(len(tt), 0.1, 0.4)
-    place(x, whir, 0.6)
-    return norm(x, -6)
-
-
-def static_burst():
-    d = 0.9
-    x = white(d) * env_ar(int(d * SR), 0.005, 0.5)
-    sweep = np.linspace(4000, 800, len(x))
-    x = hp(x, 400) * 0.7 + lp(x, 3000) * 0.3
-    return norm(x * (0.7 + 0.3 * np.sign(np.sin(2 * np.pi * 60 * t(d)))), -3)
-
-
-def death():
-    d = 3.0
-    x = white(d) * env_ar(int(d * SR), 0.005, 1.5)
-    place(x, crawler_scream() * 0.8, 0.0)
-    tt = t(1.5)
-    tape = np.sin(2 * np.pi * np.cumsum(np.linspace(200, 20, len(tt))) / SR) * 0.6
-    place(x, tape, 1.3)
-    return norm(np.tanh(x * 2), -1)
 
 
 def door_open():
@@ -880,22 +1028,25 @@ def main():
     print("entities")
     variants("crawler_click", crawler_click, 4)
     write("crawler_rasp", crawler_rasp(), loop=True)
-    write("crawler_scream", crawler_scream())
+    for i in range(4):
+        write(f"crawler_scream_{i}", norm(conv(scream(800 + i, style=i, d=[1.7, 2.0, 1.6, 2.1][i]), OFFICE_IR, 0.3), -1))
     variants("crawler_step", crawler_step, 4)
     write("watcher_drone", drone([36.7, 55.0, 73.4, 36.9], 20, 0.15, 0, 200), loop=True)
     write("smiler_drone", drone([55, 58.3, 61.7, 110.5], 15, 0.3, 200, 600), loop=True)
     write("smiler_hiss", smiler_hiss())
     variants("dweller_knock", dweller_knock, 3)
     write("dweller_groan", dweller_groan())
-    write("sting_spot", sting("spot"))
-    write("sting_chase", sting("chase"))
+    print("scares")
+    variants("sting_crawler", sting_crawler, 3)
+    variants("sting_watcher", sting_watcher, 3)
+    variants("sting_smiler", sting_smiler, 3)
+    variants("sting_mimic", sting_mimic, 2)
+    variants("jumpscare", jumpscare, 4)
     print("interaction")
     write("bottle_open", bottle_open())
     write("drink", drink())
     write("ui_click", ui_click())
     write("ui_hover", ui_hover())
-    write("static_burst", static_burst())
-    write("death", death())
     write("door_open", door_open())
     write("hatch_open", hatch_open())
     write("elevator_ding", elevator_ding())
