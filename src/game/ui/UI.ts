@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 // DOM user interface: boot, main menu, online lobby, HUD, chat, shop,
 // lockers, bulletin board, settings, pause, death/ending.
 
@@ -66,6 +67,7 @@ export class UI {
   online = false;
   onlineLink = '';
   region: Region = detectRegion();
+  private pings: { el: HTMLElement; pos: THREE.Vector3; t: number }[] = [];
 
   constructor(
     private game: Game,
@@ -730,8 +732,44 @@ export class UI {
     }
   }
 
+  /** On-screen marker for something a teammate spotted (AI mode's stand-in for voice callouts). */
+  ping(pos: THREE.Vector3, kind: 'threat' | 'item' | 'exit', label: string) {
+    const icon = kind === 'threat' ? '!' : kind === 'exit' ? '⇧' : '+';
+    const el = h(`<div class="ping-mark ${kind}"><i>${icon}</i><span>${esc(label)}<b></b></span></div>`);
+    this.root.append(el);
+    this.pings.push({ el, pos: pos.clone(), t: kind === 'exit' ? 9 : 4.5 });
+  }
+
+  private updatePings(dt: number) {
+    const cam = this.game.camera;
+    const W = innerWidth;
+    const H = innerHeight;
+    this.pings = this.pings.filter((p) => {
+      p.t -= dt;
+      if (p.t <= 0 || !this.inGame) {
+        p.el.remove();
+        return false;
+      }
+      const v = p.pos.clone().setY(1.3).project(cam);
+      const behind = v.z > 1;
+      let x = (v.x * 0.5 + 0.5) * W;
+      let y = (-v.y * 0.5 + 0.5) * H;
+      if (behind) {
+        x = W - x;
+        y = H - 40;
+      }
+      x = Math.max(40, Math.min(W - 40, x));
+      y = Math.max(40, Math.min(H - 60, y));
+      p.el.style.transform = `translate(${x}px, ${y}px)`;
+      p.el.style.opacity = String(Math.min(1, p.t));
+      ($('b', p.el) as HTMLElement).textContent = ` ${Math.round(cam.position.distanceTo(p.pos))} m`;
+      return true;
+    });
+  }
+
   update(dt: number) {
     const g = this.game;
+    this.updatePings(dt);
     if (!this.inGame) return;
     const p = g.player;
     const bat = $('.bat', this.hud);

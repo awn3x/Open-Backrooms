@@ -9,6 +9,7 @@ import { hashString } from './core/rng';
 import { nostr } from './net/Nostr';
 import { roomIdFor, parseRoom, type GameMode } from './net/Lobby';
 import { board } from './net/Board';
+import { findPath } from './entities/Pathfinding';
 
 const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) && !('ontouchend' in document && innerWidth > 1100);
 if (isMobile) {
@@ -215,3 +216,4 @@ game
 // debug handle for automated screenshots
 (window as unknown as { __game: Game; __levels: typeof LEVELS }).__game = game;
 (window as unknown as { __levels: typeof LEVELS }).__levels = LEVELS;
+(window as unknown as { __findPath: typeof findPath }).__findPath = findPath;
