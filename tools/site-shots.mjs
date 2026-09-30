@@ -1,0 +1,45 @@
+// Captures the marketing screenshots in public/site/ from the real game.
+import { chromium } from 'playwright-core';
+import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path';
+const root = path.resolve('dist');
+const out = path.resolve('tools/out/site'); fs.mkdirSync(out, { recursive: true });
+const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.webp': 'image/webp', '.json': 'application/json', '.svg': 'image/svg+xml' };
+const server = http.createServer((req, res) => { let p = decodeURIComponent(new URL(req.url, 'http://x').pathname); if (p.endsWith('/')) p += 'index.html'; const f = path.join(root, p); if (!fs.existsSync(f)) { res.writeHead(404); return res.end(); } res.writeHead(200, { 'content-type': types[path.extname(f)] || 'application/octet-stream' }); fs.createReadStream(f).pipe(res); });
+await new Promise((r) => server.listen(4185, r));
+const b = await chromium.launch({ executablePath: process.env.CHROME, args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
+const page = await b.newPage({ viewport: { width: 1600, height: 900 } });
+await page.goto('http://localhost:4185/play/');
+await page.waitForSelector('#boot .start:not(.hidden)', { timeout: 120000 });
+await page.evaluate(() => { const s = JSON.parse(localStorage.getItem('ob.settings') || '{}'); s.quality = 'medium'; localStorage.setItem('ob.settings', JSON.stringify(s)); });
+await page.reload();
+await page.waitForSelector('#boot .start:not(.hidden)', { timeout: 120000 });
+await page.click('#boot .start');
+await page.waitForSelector('#menu', { timeout: 120000 });
+await page.waitForTimeout(8000);
+await page.screenshot({ path: path.join(out, 'menu.png') });
+const shot = async (name, level, x, z, yaw, pitch, hud) => {
+  await page.evaluate(async ({ level, x, z, yaw, pitch, hud }) => {
+    const g = window.__game;
+    g.menuMode = false;
+    g.ui.enterGame(false);
+    g.roomSeed = 1234567;
+    if (g.level !== level || !g.world) await g.enterLevel(level);
+    g.player.teleport(x, z, yaw);
+    g.player.pitch = pitch;
+    const r = g.collider.resolve(x, z, 0.3); g.player.pos.x = r.x; g.player.pos.z = r.z;
+    g.post.resetHistory(g.camera);
+    g.entities.authority = false;
+    document.querySelector('#hud').classList.toggle('hidden', !hud);
+    document.querySelector('#title-card')?.classList.remove('show');
+    document.querySelector('#toasts').innerHTML = '';
+  }, { level, x, z, yaw, pitch, hud });
+  await page.waitForTimeout(9000);
+  await page.evaluate(() => document.querySelector('#title-card')?.classList.remove('show'));
+  await page.screenshot({ path: path.join(out, name + '.png'), timeout: 180000 });
+};
+await shot('base', 0, 1.2, 4.0, 2.6, -0.02, true);
+await shot('hero', 0, 21.2, 2.0, 1.65, 0.02, false);
+await shot('l0', 0, -18.8, 17.2, -2.4, -0.05, false);
+await shot('l1', 1, -16, 18, 0.6, 0.02, false);
+await shot('l2', 2, 1.0, 0.8, 0.6, 0.02, false);
+await b.close(); server.close();
