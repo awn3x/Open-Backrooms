@@ -162,7 +162,10 @@
   "crawler_rasp"
  ],
  "crawler_scream": [
-  "crawler_scream"
+  "crawler_scream_0",
+  "crawler_scream_1",
+  "crawler_scream_2",
+  "crawler_scream_3"
  ],
  "crawler_step": [
   "crawler_step_0",
@@ -187,11 +190,30 @@
  "dweller_groan": [
   "dweller_groan"
  ],
- "sting_spot": [
-  "sting_spot"
+ "sting_crawler": [
+  "sting_crawler_0",
+  "sting_crawler_1",
+  "sting_crawler_2"
  ],
- "sting_chase": [
-  "sting_chase"
+ "sting_watcher": [
+  "sting_watcher_0",
+  "sting_watcher_1",
+  "sting_watcher_2"
+ ],
+ "sting_smiler": [
+  "sting_smiler_0",
+  "sting_smiler_1",
+  "sting_smiler_2"
+ ],
+ "sting_mimic": [
+  "sting_mimic_0",
+  "sting_mimic_1"
+ ],
+ "jumpscare": [
+  "jumpscare_0",
+  "jumpscare_1",
+  "jumpscare_2",
+  "jumpscare_3"
  ],
  "bottle_open": [
   "bottle_open"
@@ -204,12 +226,6 @@
  ],
  "ui_hover": [
   "ui_hover"
- ],
- "static_burst": [
-  "static_burst"
- ],
- "death": [
-  "death"
  ],
  "door_open": [
   "door_open"
