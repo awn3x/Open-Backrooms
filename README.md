@@ -50,7 +50,9 @@ The build is a static site with relative URLs, so the same `dist/` works on GitH
 **GitHub Pages**
 1. Merge to `main`.
 2. In the repo, go to **Settings → Pages → Build and deployment → Source** and choose **GitHub Actions**.
-3. The `Deploy to GitHub Pages` workflow builds and publishes on every push to `main`.
+3. The `Deploy to GitHub Pages` workflow builds and publishes on every push to `main`. (Or run it from the Actions tab.)
+
+> **Site looks like plain unstyled text?** Pages is serving the raw source. Set **Settings → Pages → Source** to **GitHub Actions** (not "Deploy from a branch") and re-run the workflow.
 
 **Vercel**
 1. Go to https://vercel.com/new and import the repository (the free Hobby plan is fine).
