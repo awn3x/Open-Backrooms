@@ -171,7 +171,7 @@ def build_character(name, targets, include=("body",), stretch=None, skin=(0.72, 
             for lp, ui in zip(bf.loops, fu):
                 u, w = uvs[ui] if ui >= 0 else (0.0, 0.0)
                 if g != "body":
-                    u, w = 0.955 + u * 0.04, 0.955 + w * 0.04
+                    u, w = 0.757 + u * 0.08, 0.907 + w * 0.085
                 lp[uvl].uv = (u, w)
         except ValueError:
             pass
@@ -643,26 +643,392 @@ def eye_centres(v):
     return out
 
 
-def smooth_face(body, iterations=30):
-    """Erase the face: relax the front of the head until nose, lips and brows melt into a blank mask."""
+def smooth_face(body, rx=0.062, rz=0.095):
+    """Erase the face (Faceling): project every vertex of the eyes/nose/mouth area — inner sockets and
+    lips included — onto a smooth surface fitted to the front of the head, feathered at the edges."""
     me = body.data
-    zs = [vt.co.z for vt in me.vertices]
-    top = max(zs)
-    bm = bmesh.new()
-    bm.from_mesh(me)
-    ys = [vt.co.y for vt in bm.verts if vt.co.z > top - 0.3]
-    front = min(ys)
-    # only the face plate (front 6 cm of the head, between chin and brow); keep the skull's volume
-    head = [vt for vt in bm.verts if top - 0.34 < vt.co.z < top - 0.08 and vt.co.y < front + 0.05 and abs(vt.co.x) < 0.075]
-    for _ in range(iterations):
-        bmesh.ops.smooth_vert(bm, verts=head, factor=0.5, use_axis_x=True, use_axis_y=True, use_axis_z=True)
-    bm.to_mesh(me)
-    bm.free()
+    co = np.array([vt.co[:] for vt in me.vertices])
+    top = co[:, 2].max()
+    head = co[co[:, 2] > top - 0.3]
+    front = head[:, 1].min()
+    zc = top - 0.15
+    ex = co[:, 0] / rx
+    ez = (co[:, 2] - zc) / rz
+    rr = ex * ex + ez * ez
+    region = (rr < 1.6) & (co[:, 1] < front + 0.09)
+    # fit y = a + b x^2 + c (z-zc)^2 + d (z-zc) to the outer skin just around the features
+    ring = region & (rr > 0.9)
+    outer = ring & (co[:, 1] < front + 0.05)
+    X = np.stack([np.ones(outer.sum()), co[outer, 0] ** 2, (co[outer, 2] - zc) ** 2, co[outer, 2] - zc], 1)
+    coef, *_ = np.linalg.lstsq(X, co[outer, 1], rcond=None)
+    fit = coef[0] + coef[1] * co[:, 0] ** 2 + coef[2] * (co[:, 2] - zc) ** 2 + coef[3] * (co[:, 2] - zc)
+    w = np.clip((1.6 - rr) / 0.7, 0, 1)
+    w = w * w * (3 - 2 * w)
+    newy = co[:, 1] * (1 - w) + fit * w
+    for i in np.nonzero(region)[0]:
+        me.vertices[i].co.y = float(newy[i])
     me.update()
 
 
 def surface(parts, name, res=1024):
     BK.bake(parts, name, res=res)
+
+
+def mouth_centre(v):
+    verts, faces, groups = load_obj()
+    idx = sorted({i for f, g in zip(faces, groups) if g == "helper-upper-teeth" for i in f})
+    pts = np.array([to_blender(v[i]) for i in idx])
+    c = pts.mean(0)
+    c[1] = pts[:, 1].min()  # front of the teeth
+    return Vector(c)
+
+
+def cone(base, tip, r, segs=6):
+    """A pointed cone from base to tip (bmesh verts in a new mesh)."""
+    bm = bmesh.new()
+    d = (tip - base)
+    L = d.length
+    bmesh.ops.create_cone(bm, cap_ends=True, cap_tris=True, segments=segs, radius1=r, radius2=0.0, depth=L)
+    q = Vector((0, 0, 1)).rotation_difference(d.normalized())
+    for vt in bm.verts:
+        vt.co = q @ vt.co + base + d * 0.5
+    return bm
+
+
+_SPOTS = {}
+
+
+def flat_uv(me, key):
+    """Constant-colour parts all sample one small spot of the atlas (a separate spot per material)."""
+    if key not in _SPOTS:
+        k = len(_SPOTS)
+        _SPOTS[key] = (0.762 + (k % 6) * 0.012, 0.826 + (k // 6) * 0.012)
+    u, v = _SPOTS[key]
+    for i, d in enumerate(me.uv_layers[0].data):
+        d.uv = (u + (i % 3) * 0.002, v + (i % 2) * 0.002)
+
+
+def merge_bms(name, bms, material, bone, uv=None):
+    me = bpy.data.meshes.new(name)
+    out = bmesh.new()
+    for b in bms:
+        tmp = bpy.data.meshes.new("tmp")
+        b.to_mesh(tmp)
+        b.free()
+        out.from_mesh(tmp)
+        bpy.data.meshes.remove(tmp)
+    out.to_mesh(me)
+    out.free()
+    ob = bpy.data.objects.new(name, me)
+    link(ob)
+    me.uv_layers.new(name="UVMap")
+    flat_uv(me, material.name)
+    me.materials.append(material)
+    for p in me.polygons:
+        p.use_smooth = True
+    if isinstance(bone, str):
+        rigid_piece(ob, bone)
+    return ob
+
+
+def hound_teeth(v):
+    """Rows of uneven, needle-like teeth along both jaws (the wiki's 'very big mouth, sharp teeth')."""
+    m = mouth_centre(v)
+    tm = mat("HoundTeeth", (0.62, 0.55, 0.38), 0.3)
+    r = random.Random(9)
+    rows = []
+    for upper in (True, False):
+        bms = []
+        n = 18
+        for k in range(n):
+            t = (k / (n - 1)) * 2 - 1
+            x = t * 0.03
+            y = m.y + 0.022 * t * t + 0.002
+            z = m.z + (0.004 if upper else -0.014)
+            L = r.uniform(0.012, 0.03) * (1.25 - 0.4 * abs(t))
+            base = Vector((x, y, z))
+            tip = base + Vector((r.uniform(-0.003, 0.003), -0.004, -L if upper else L))
+            bms.append(cone(base, tip, r.uniform(0.0022, 0.0038)))
+        rows.append(merge_bms("TeethU" if upper else "TeethL", bms, tm, "head" if upper else "jaw"))
+    return rows
+
+
+def claws(arm, length=0.055, r=0.006):
+    cm = mat("Claw", (0.16, 0.13, 0.1), 0.35)
+    obs = []
+    for sd in SIDES:
+        for n in (1, 2, 3, 4, 5):
+            b = arm.data.bones.get(f"finger{n}-2{sd}")
+            if not b:
+                continue
+            d = (b.tail_local - b.head_local).normalized()
+            obs.append(merge_bms(f"Claw{n}{sd}", [cone(b.tail_local - d * 0.006, b.tail_local + d * length, r)], cm, f"finger{n}-2{sd}"))
+        ft = arm.data.bones.get(f"toe1-1{sd}") or arm.data.bones.get(f"foot{sd}")
+        d = (ft.tail_local - ft.head_local).normalized()
+        side = Vector((1, 0, 0))
+        for o in (-0.025, 0.0, 0.025):
+            base = ft.tail_local + side * o
+            obs.append(merge_bms(f"Toe{o}{sd}", [cone(base, base + d * length * 0.7 + Vector((0, 0, -0.01)), r * 0.9)], cm, ft.name))
+    return obs
+
+
+def lank_hair(body, n=650, seed=4, gravity=(0.0, -0.93, -0.37)):
+    """Long, greasy black hair as tapered ribbons. `gravity` is 'down' expressed in the head's rest frame
+    for the pose the creature spends its life in (on all fours the face points at the floor)."""
+    r = random.Random(seed)
+    me = body.data
+    top = max(vt.co.z for vt in me.vertices)
+    front = min(vt.co.y for vt in me.vertices if vt.co.z > top - 0.25)
+    roots = [vt for vt in me.vertices if vt.co.z > top - 0.12 and vt.co.y > front + 0.03]
+    gv = Vector(gravity).normalized()
+    hm = mat("HoundHair", (0.012, 0.011, 0.01), 0.32)
+    bm = bmesh.new()
+    for _ in range(n):
+        rv = r.choice(roots)
+        p = rv.co.copy()
+        nrm = rv.normal.copy()
+        L = r.uniform(0.22, 0.45)
+        segs = 10
+        prev = None
+        drift = Vector((r.gauss(0, 0.05), r.gauss(0, 0.03), r.gauss(0, 0.03)))
+        c = p.copy()
+        d = nrm.copy()
+        for k in range(segs + 1):
+            t = k / segs
+            if k:
+                d = (d * 0.55 + gv * 0.45 + drift * 0.3).normalized()  # bends from the scalp into hanging
+                c = c + d * (L / segs)
+            side = d.cross(nrm)
+            if side.length < 1e-4:
+                side = d.cross(Vector((1, 0, 0)))
+            side.normalize()
+            w = 0.004 * (1 - 0.85 * t)
+            q = c + nrm * 0.006
+            a = bm.verts.new(q - side * w)
+            b = bm.verts.new(q + side * w)
+            if prev:
+                bm.faces.new((prev[0], prev[1], b, a))
+            prev = (a, b)
+    hmesh = bpy.data.meshes.new("HoundHair")
+    bm.to_mesh(hmesh)
+    bm.free()
+    ob = bpy.data.objects.new("HoundHair", hmesh)
+    link(ob)
+    hmesh.uv_layers.new(name="UVMap")
+    flat_uv(hmesh, "HoundHair")
+    hmesh.materials.append(hm)
+    rigid_piece(ob, "head")
+    return ob
+
+
+def hound():
+    """Hound (Backrooms wiki, Level 1-2): nude grey quadruped humanoid, long lank black hair, a huge mouth
+    of sharp teeth, very long limbs and claws, black beady eyes."""
+    targets = [("macrodetails/caucasian-male-young.target", 1.0), ("macrodetails/universal-male-young-minmuscle-minweight.target", 1.0)]
+    body, arm, v, vw, used = build_character("Hound", targets, stretch=emaciated(1.05), eyes=True, teeth=False)
+    eyes = eye_centres(v)
+    top = max(vt.co.z for vt in body.data.vertices)
+    front = min(vt.co.y for vt in body.data.vertices if vt.co.z > top - 0.25)
+    BK.skin(body.data.materials[0], (0.36, 0.36, 0.34), (0.26, 0.25, 0.26), vein=(0.17, 0.19, 0.24), rough=0.42, wet=0.35,
+            ribs=(1.04, 1.36, 0.034), sockets=[(e.x, e.y, e.z, 0.024) for e in eyes], socket_col=(0.03, 0.025, 0.025),
+            dirt=(0.1, 0.08, 0.06), mottle=1.3, scalp=(top + 0.02, front), hair_col=(0.012, 0.011, 0.01))
+    BK.eye(bpy.data.materials["Eye"], [tuple(e) for e in eyes], dead=True)
+    extras = hound_teeth(v) + claws(arm) + [lank_hair(body)]
+    for o in extras:
+        for g in body.vertex_groups:
+            if g.name not in o.vertex_groups:
+                o.vertex_groups.new(name=g.name)
+    ob = join_all([body] + extras, "Hound")
+    surface([ob], "hound", 1024)
+    attach(ob, arm)
+    crawler_clips(arm, jaw=52)
+    finish("Hound", [ob], arm, "hound", [("crawl", 24), ("lunge", 18)])
+
+
+# ------------------------------------------------------------------ the Howler (Kane Pixels' Level 0 "Bacteria")
+def howler():
+    """~3.3 m tall humanoid made of tangled black wire-like strands: arms to the floor, long thin fingers,
+    short footless legs, cables wrapped round the body; jerky, stop-motion movement."""
+    targets = [("macrodetails/caucasian-male-young.target", 0.6), ("macrodetails/universal-male-young-minmuscle-minweight.target", 1.0)]
+    body, arm, v, vw, used = build_character("Howler", targets, stretch=emaciated(1.75), eyes=False)
+    bpy.data.objects.remove(body, do_unlink=True)
+    B = arm.data.bones
+    r = random.Random(17)
+
+    def chain(names):
+        pts = [B[names[0]].head_local.copy()] + [B[n].tail_local.copy() for n in names]
+        return pts
+
+    def resample(pts, step=0.035):
+        out = [pts[0]]
+        for a, b in zip(pts, pts[1:]):
+            n = max(1, int((b - a).length / step))
+            for k in range(1, n + 1):
+                out.append(a.lerp(b, k / n))
+        return out
+
+    chains = [(["spine05", "spine04", "spine03", "spine02", "spine01", "neck01", "neck02", "neck03", "head"], 0.075, 52, 0.0055)]
+    for sd in SIDES:
+        chains.append(([f"clavicle{sd}", f"shoulder01{sd}", f"upperarm01{sd}", f"upperarm02{sd}", f"lowerarm01{sd}", f"lowerarm02{sd}", f"wrist{sd}", f"finger3-1{sd}", f"finger3-2{sd}"], 0.024, 20, 0.0036))
+        chains.append(([f"pelvis{sd}", f"upperleg01{sd}", f"upperleg02{sd}", f"lowerleg01{sd}", f"lowerleg02{sd}"], 0.04, 26, 0.0048))
+        for n in (1, 2, 4, 5):
+            chains.append(([f"wrist{sd}", f"finger{n}-1{sd}", f"finger{n}-2{sd}"], 0.005, 2, 0.0035))
+    cu = bpy.data.curves.new("HowlerStrands", "CURVE")
+    cu.dimensions = "3D"
+    cu.bevel_depth = 0.01
+    cu.bevel_resolution = 2
+    cu.use_fill_caps = True
+    for names, R, count, thick in chains:
+        base = resample(chain(names))
+        for k in range(count + (3 if R > 0.02 else 0)):
+            cable = k >= count
+            ph = r.uniform(0, 6.283)
+            tw = (r.uniform(4, 14) if cable else r.uniform(-3, 3)) * (1 if r.random() < 0.5 else -1)
+            rr = (1.15 if cable else r.uniform(0.25, 1.0)) * R
+            sp = cu.splines.new("POLY")
+            sp.points.add(len(base) - 1)
+            for i, p in enumerate(base):
+                j = min(i + 1, len(base) - 1)
+                d = (base[j] - base[max(i - 1, 0)]).normalized()
+                u = d.cross(Vector((0, 0, 1)))
+                if u.length < 1e-3:
+                    u = d.cross(Vector((1, 0, 0)))
+                u.normalize()
+                w = d.cross(u)
+                t = i / max(1, len(base) - 1)
+                a = ph + tw * t * 6.283
+                wob = 1.0 + 0.35 * math.sin(i * 0.9 + ph * 3)
+                off = (u * math.cos(a) + w * math.sin(a)) * rr * wob + Vector((r.gauss(0, 0.004), r.gauss(0, 0.004), r.gauss(0, 0.004)))
+                q = p + off
+                sp.points[i].co = (q.x, q.y, q.z, 1)
+                sp.points[i].radius = ((thick * 1.6) if cable else thick * r.uniform(0.6, 1.3)) / 0.01 * (1 - 0.5 * t if len(names) <= 3 else 1)
+    cob = bpy.data.objects.new("HowlerCurve", cu)
+    link(cob)
+    dg = bpy.context.evaluated_depsgraph_get()
+    me = bpy.data.meshes.new_from_object(cob.evaluated_get(dg))
+    bpy.data.objects.remove(cob, do_unlink=True)
+    ob = bpy.data.objects.new("Howler", me)
+    link(ob)
+    # weights: nearest two bone segments
+    segs = [(b.name, np.array(b.head_local), np.array(b.tail_local)) for b in B if b.name in KEEPSET]
+    vg = {n: ob.vertex_groups.new(name=n) for n, _, _ in segs}
+    co = np.array([vt.co[:] for vt in me.vertices])
+    dists = []
+    for n, a, b in segs:
+        ab = b - a
+        t = np.clip(((co - a) @ ab) / max(1e-9, ab @ ab), 0, 1)
+        dists.append(np.linalg.norm(co - (a + t[:, None] * ab), axis=1))
+    dists = np.stack(dists, 1)
+    order = np.argsort(dists, 1)[:, :2]
+    for i in range(len(co)):
+        a, b = order[i]
+        da, db = dists[i, a] + 1e-4, dists[i, b] + 1e-4
+        wa = (1 / da) / (1 / da + 1 / db)
+        vg[segs[a][0]].add([i], float(wa), "REPLACE")
+        vg[segs[b][0]].add([i], float(1 - wa), "REPLACE")
+    # black, slightly glossy fibre with mould-green flecks (vertex colour; no texture needed)
+    ca = me.color_attributes.new("Col", "BYTE_COLOR", "POINT")
+    for i, c in enumerate(co):
+        n = math.sin(c[0] * 91 + c[1] * 57 + c[2] * 133) * 0.5 + 0.5
+        mold = max(0.0, math.sin(c[0] * 13 + c[2] * 7) * math.sin(c[1] * 17 + c[2] * 5)) ** 3
+        base = 0.012 + 0.02 * n
+        ca.data[i].color = (base + 0.01 * mold, base + 0.03 * mold, base + 0.008 * mold, 1)
+    m = mat("HowlerFibre", (1, 1, 1), 0.38)
+    vc = m.node_tree.nodes.new("ShaderNodeVertexColor")
+    vc.layer_name = "Col"
+    m.node_tree.links.new(vc.outputs["Color"], m.node_tree.nodes["Principled BSDF"].inputs["Base Color"])
+    me.materials.append(m)
+    for p in me.polygons:
+        p.use_smooth = True
+    attach(ob, arm)
+    rest = arm_rest_angles(arm)
+    root = P(arm, "root")
+
+    def body_pose(a):
+        arms_down(a, rest, extra=2, side_out=3)
+        for s in SIDES:
+            for b in ("upperarm01", "upperarm02", "lowerarm01", "lowerarm02"):
+                P(a, f"{b}{s}").scale = (1, 1.62, 1)
+            for n in (1, 2, 3, 4, 5):
+                P(a, f"finger{n}-1{s}").scale = (1, 1.9, 1)
+                P(a, f"finger{n}-2{s}").scale = (1, 1.9, 1)
+            for b in ("upperleg01", "upperleg02", "lowerleg01", "lowerleg02"):
+                P(a, f"{b}{s}").scale = (1, 0.82, 1)
+        rot(P(a, "spine03"), X, 8)
+        rot(P(a, "neck01"), X, 26)
+        rot(P(a, "head"), X, -18)
+
+    def stop(t, fps=7):
+        return math.floor(t * fps) / fps  # stop-motion timing
+
+    def idle(a, t):
+        body_pose(a)
+        q = stop(t, 5)
+        rot(P(a, "head"), Z, 18 * math.sin(q * 6.283 * 2) * (1 if q % 0.4 < 0.2 else -1))
+        rot(P(a, "spine02"), Z, 3 * math.sin(q * 6.283))
+        for s in SIDES:
+            for n in (2, 3, 4, 5):
+                rot(P(a, f"finger{n}-1{s}"), X, -20 * (0.5 + 0.5 * math.sin(q * 25 + n)))
+        ground(a, [f"lowerleg02{sd}" for sd in SIDES])
+
+    def walk(a, t):
+        body_pose(a)
+        q = stop(t, 8)
+        for s, off in ((".L", 0.0), (".R", 0.5)):
+            p = (q + off) % 1.0
+            rot(P(a, f"upperleg01{s}"), X, -26 * math.sin(6.283 * p))
+            rot(P(a, f"lowerleg01{s}"), X, 22 * max(0.0, math.sin(6.283 * p + 1)))
+            rot(P(a, f"upperarm01{s}"), X, 10 * math.sin(6.283 * p + 3.1))
+        rot(P(a, "head"), Z, 25 * math.sin(q * 6.283 * 3))
+        ground(a, [f"lowerleg02{sd}" for sd in SIDES])
+
+    def tilt(a, t):
+        body_pose(a)
+        e = 1 if t > 0.3 else 0
+        rot(P(a, "head"), Y, 80 * e)
+        ground(a, [f"lowerleg02{sd}" for sd in SIDES])
+
+    def lunge(a, t):
+        body_pose(a)
+        e = min(1.0, t / 0.4)
+        e = 1 - (1 - e) ** 3
+        for s in SIDES:
+            rot(P(a, f"upperarm01{s}"), X, -95 * e)
+            rot(P(a, f"lowerarm01{s}"), X, -15 * e)
+        rot(P(a, "spine02"), X, 22 * e)
+        rot(P(a, "head"), X, -30 * e)
+        ground(a, [f"lowerleg02{sd}" for sd in SIDES])
+
+    clip(arm, "idle", 90, idle)
+    clip(arm, "walk", 32, walk)
+    clip(arm, "tilt", 60, tilt, loop=False)
+    clip(arm, "lunge", 18, lunge, loop=False)
+    finish("Howler", [ob], arm, "howler", [("walk", 32), ("lunge", 18)])
+
+
+def tie(arm, material):
+    """A loosened office tie down the shirt front."""
+    nb = arm.data.bones["neck01"].head_local
+    sb = arm.data.bones["spine03"].head_local
+    bm = bmesh.new()
+    top = nb + Vector((0, -0.058, -0.035))
+    bot = Vector((0, sb.y - 0.12, sb.z - 0.05))
+    prev = None
+    for k in range(9):
+        t = k / 8
+        c = top.lerp(bot, t) + Vector((0, -0.012 * math.sin(t * 3.1), 0))
+        w = 0.018 + 0.022 * t if k < 8 else 0.0
+        a = bm.verts.new(c + Vector((-w, 0, 0)))
+        b = bm.verts.new(c + Vector((w, 0, 0)))
+        if prev:
+            bm.faces.new((prev[0], prev[1], b, a))
+        prev = (a, b)
+    ob = merge_bms("Tie", [bm], material, "spine02")
+    sol = ob.modifiers.new("sol", "SOLIDIFY")
+    sol.thickness = 0.004
+    apply_modifiers(ob)
+    return ob
+
 
 # ------------------------------------------------------------------ characters
 RACE_MALE = [("macrodetails/caucasian-male-young.target", 0.5), ("macrodetails/african-male-young.target", 0.25), ("macrodetails/asian-male-young.target", 0.25)]
@@ -707,7 +1073,7 @@ def backpack(arm):
             co = me.vertices[me.loops[li].vertex_index].co - sp
             n = p.normal
             a, b = (co.y, co.z) if abs(n.x) > max(abs(n.y), abs(n.z)) else (co.x, co.z) if abs(n.y) > abs(n.z) else (co.x, co.y)
-            uvl[li].uv = (0.83 + (a + 0.3) * 0.13, 0.855 + (b + 0.3) * 0.13)
+            uvl[li].uv = (0.843 + (a + 0.2) * 0.22, 0.825 + (b + 0.25) * 0.24)
     m = bpy.data.materials.new("Backpack")
     BK.nylon(m, (0.2, 0.07, 0.05))
     me.materials.append(m)
@@ -737,7 +1103,7 @@ def collar(arm, material, r=0.068, thick=0.02, drop=0.0, back=0.012):
     for p in me.polygons:
         for li in p.loop_indices:
             co = me.vertices[me.loops[li].vertex_index].co
-            me.uv_layers[0].data[li].uv = (0.84 + (math.atan2(co.y - n.y, co.x - n.x) / 6.2832 + 0.5) * 0.1, 0.965 + (co.z - n.z + 0.05) * 0.3)
+            me.uv_layers[0].data[li].uv = (0.757 + (math.atan2(co.y - n.y, co.x - n.x) / 6.2832 + 0.5) * 0.08, 0.822 + (co.z - n.z + 0.05) * 0.3)
     sol = ob.modifiers.new("sol", "SOLIDIFY")
     sol.thickness = 0.006
     apply_modifiers(ob)
@@ -754,15 +1120,18 @@ def avatar():
     hair = None
     top = max(vt.co.z for vt in body.data.vertices)
     front = min(vt.co.y for vt in body.data.vertices if vt.co.z > top - 0.25)
+    eyes = eye_centres(v)
+    mouth = mouth_centre(v)
     BK.skin(body.data.materials[0], (0.74, 0.55, 0.45), (0.62, 0.4, 0.32), rough=0.5, wet=0.1,
-            redness=(0.78, 0.42, 0.36), dirt=(0.42, 0.3, 0.24), mottle=0.4, scalp=(top, front), hair_col=(0.06, 0.035, 0.022))
+            redness=(0.78, 0.42, 0.36), dirt=(0.42, 0.3, 0.24), mottle=0.4, scalp=(top, front), hair_col=(0.06, 0.035, 0.022),
+            brows=[tuple(e) for e in eyes], lips=tuple(mouth), stubble=0.5)
+    BK.eye(bpy.data.materials["Eye"], [tuple(e) for e in eyes])
     BK.knit(bpy.data.materials["Hoodie"], (0.62, 0.62, 0.6))  # neutral: the game tints it per outfit
     BK.denim(bpy.data.materials["Denim"])
     BK.leather(bpy.data.materials["Shoe"], (0.08, 0.08, 0.09))
     pack = backpack(arm)
     parts = [body] + pieces + ([hair] if hair else []) + [pack, collar(arm, "Hoodie", r=0.07, thick=0.03)]
     ob = join_all(parts, "Avatar")
-    decimate(ob, 0.5)
     surface([ob], "avatar", 1024)
     attach(ob, arm)
     humanoid_clips(arm, "Avatar")
@@ -884,25 +1253,26 @@ def dweller():
     finish("Dweller", [body], arm, "dweller", [("crawl", 24)])
 
 
-def watcher():
-    """A 'Faceling': a too-tall office worker with no face, in a sweat-stained shirt and slacks."""
+def faceling():
+    """Faceling (Backrooms wiki): human in every way except the face, which is blank. Mostly harmless."""
     body, arm, v, vw, used = build_character(
-        "Watcher", [("macrodetails/caucasian-male-young.target", 0.8), ("macrodetails/universal-male-young-minmuscle-minweight.target", 0.7)],
-        stretch=emaciated(1.26), eyes=False)
+        "Faceling", [("macrodetails/caucasian-male-young.target", 0.8), ("macrodetails/universal-male-young-minmuscle-minweight.target", 0.7)],
+        stretch=emaciated(1.04), eyes=False)
     smooth_face(body)
     pieces = dress_up(body, arm, specs={
         "top": ("Shirt", (0.7, 0.68, 0.6), 0.85, 0.008),
         "legs": ("Slacks", (0.1, 0.1, 0.11), 0.8, 0.008),
         "shoes": ("Shoe", (0.05, 0.04, 0.035), 0.5, 0.008),
     })
-    BK.skin(body.data.materials[0], (0.4, 0.37, 0.33), (0.3, 0.28, 0.26), vein=(0.28, 0.27, 0.33), rough=0.3, wet=0.25,
+    BK.skin(body.data.materials[0], (0.4, 0.37, 0.33), (0.3, 0.28, 0.26), rough=0.3, wet=0.25,
             dirt=(0.2, 0.18, 0.15), pores=0.3, mottle=0.4)
     BK.cotton(bpy.data.materials["Shirt"], (0.82, 0.8, 0.72), stain=(0.55, 0.43, 0.2), stains=0.8)
     BK.cotton(bpy.data.materials["Slacks"], (0.09, 0.09, 0.1), stain=(0.16, 0.14, 0.11), stains=0.4, rough=0.75, grime=(0.05, 0.05, 0.05))
     BK.leather(bpy.data.materials["Shoe"], (0.05, 0.035, 0.025), rough=0.35, sole=(0.04, 0.04, 0.04))
-    body = join_all([body] + pieces + [collar(arm, "Shirt", r=0.047, thick=0.006, back=0.006)], "Watcher")
-    decimate(body, 0.55)
-    surface([body], "watcher", 1024)
+    tm = bpy.data.materials.new("Tie")
+    BK.cotton(tm, (0.05, 0.06, 0.11), stain=(0.03, 0.03, 0.05), stains=0.3, rough=0.6)
+    body = join_all([body] + pieces + [collar(arm, "Shirt", r=0.047, thick=0.006, back=0.006), tie(arm, tm)], "Faceling")
+    surface([body], "faceling", 1024)
     attach(body, arm)
     rest = arm_rest_angles(arm)
     root = P(arm, "root")
@@ -940,10 +1310,10 @@ def watcher():
     clip(arm, "idle", 120, idle)
     clip(arm, "tilt", 90, tilt, loop=False)
     clip(arm, "walk", 40, walk)
-    finish("Watcher", [body], arm, "watcher", [("walk", 40), ("tilt", 90)])
+    finish("Faceling", [body], arm, "faceling", [("walk", 40), ("tilt", 90)])
 
 
-ALL = {"avatar": avatar, "crawler": crawler, "dweller": dweller, "watcher": watcher}
+ALL = {"avatar": avatar, "hound": hound, "howler": howler, "faceling": faceling}
 
 if __name__ == "__main__":
     for n in sys.argv[1:] or ALL:

@@ -4,7 +4,7 @@
 export type Surface = 'carpet' | 'concrete' | 'metal';
 export type FixtureKind = 'troffer' | 'highbay' | 'caged';
 export type ExitKind = 'door' | 'hatch' | 'elevator';
-export type EntityKind = 'crawler' | 'watcher' | 'smiler' | 'mimic' | 'dweller';
+export type EntityKind = 'hound' | 'howler' | 'smiler' | 'skinstealer' | 'faceling';
 
 export interface LevelDef {
   id: number;
@@ -89,7 +89,8 @@ export const LEVELS: LevelDef[] = [
     tex: { wall: 'l0_wallpaper', floor: 'l0_carpet', ceil: 'l0_ceiling', wallScale: 1.0, floorScale: 0.5, wallTint: [1, 1, 1] },
     surface: 'carpet',
     audio: { amb: 'amb_l0', ir: 'ir_l0' },
-    entities: ['crawler', 'watcher', 'smiler', 'mimic'],
+    // lore: Level 0 is all but devoid of life — rare Howler sightings, Smilers in the dark patches
+    entities: ['howler', 'smiler'],
     exit: 'door',
     exitDistance: [200, 320],
     outletChance: 0.2,
@@ -129,7 +130,8 @@ export const LEVELS: LevelDef[] = [
     tex: { wall: 'l1_wall', floor: 'l1_floor', wallScale: 2.4, floorScale: 2.0, wallTint: [1, 1, 1] },
     surface: 'concrete',
     audio: { amb: 'amb_l1', ir: 'ir_l1' },
-    entities: ['crawler', 'smiler', 'watcher', 'mimic'],
+    // lore: Hounds, Smilers, Skin-Stealers and (mostly harmless) Facelings
+    entities: ['hound', 'hound', 'smiler', 'faceling', 'faceling', 'skinstealer'],
     exit: 'hatch',
     exitDistance: [220, 340],
     outletChance: 0.12,
@@ -169,7 +171,8 @@ export const LEVELS: LevelDef[] = [
     tex: { wall: 'l2_wall', floor: 'l2_floor', wallScale: 1.6, floorScale: 1.0, wallTint: [1, 1, 1] },
     surface: 'metal',
     audio: { amb: 'amb_l2', ir: 'ir_l2' },
-    entities: ['dweller', 'smiler', 'crawler', 'mimic'],
+    // lore: Hounds, Smilers and Facelings in the steam tunnels
+    entities: ['hound', 'hound', 'hound', 'smiler', 'faceling'],
     exit: 'elevator',
     exitDistance: [160, 260],
     outletChance: 0.05,

@@ -10,7 +10,7 @@ import { LEVELS } from './levels/levels';
 
 export interface Interactable {
   id: string;
-  kind: 'shop' | 'locker' | 'board' | 'pickup' | 'exit' | 'couch';
+  kind: 'shop' | 'locker' | 'board' | 'pickup' | 'exit' | 'couch' | 'armchair';
   pos: THREE.Vector3;
   radius: number;
   label: string;
@@ -80,6 +80,7 @@ export class WorldObjects {
       place('kiosk', E - 0.36, 0, -2.4, -Math.PI / 2),
       place('bulletin_board', W, 1.45, -2.2, Math.PI / 2),
       place('couch', -2.6, 0, S - 0.45, Math.PI),
+      place('armchair', 1.4, 0, S - 0.5, Math.PI + 0.25),
       place('safe_sign', E, 2.3, 1.22, -Math.PI / 2),
       place('safe_sign', E + 2 * t, 2.3, 1.22, Math.PI / 2),
       place('safe_sign', W, 2.3, 1.22, Math.PI / 2),
@@ -90,13 +91,15 @@ export class WorldObjects {
       { x0: -2.4, z0: N, x1: -0.45, z1: N + 0.48 },
       { x0: E - 0.72, z0: -2.87, x1: E, z1: -1.93 },
       { x0: -3.55, z0: S - 0.9, x1: -1.65, z1: S },
+      { x0: 0.95, z0: S - 0.95, x1: 1.85, z1: S },
     ];
     this.collider.extra.push(...this.hubBoxes);
     this.interactables.push(
       { id: 'shop', kind: 'shop', pos: new THREE.Vector3(E - 1.1, 1, -2.4), radius: 1.6, label: 'Supply Kiosk' },
       { id: 'locker', kind: 'locker', pos: new THREE.Vector3(-1.4, 1, N + 1.0), radius: 1.7, label: 'Your Locker' },
       { id: 'board', kind: 'board', pos: new THREE.Vector3(W + 0.9, 1.4, -2.2), radius: 1.8, label: 'Bulletin Board' },
-      { id: 'couch', kind: 'couch', pos: new THREE.Vector3(-2.6, 0.5, S - 1.2), radius: 1.4, label: 'Rest' },
+      { id: 'couch', kind: 'couch', pos: new THREE.Vector3(-2.6, 0.5, S - 1.2), radius: 1.4, label: 'Couch', data: { x: -2.6, z: S - 0.5, sx: -2.6, sz: S - 1.35 } },
+      { id: 'armchair', kind: 'armchair', pos: new THREE.Vector3(1.4, 0.5, S - 1.2), radius: 1.2, label: 'Armchair', data: { x: 1.4, z: S - 0.52, sx: 1.25, sz: S - 1.3 } },
     );
   }
 

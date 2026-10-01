@@ -19,6 +19,9 @@ export interface Target {
   alive: boolean;
   lit: boolean; // flashlight on
   bot?: boolean;
+  /** horizontal facing (unit vector) — used for "is anyone looking at it?" */
+  fx?: number;
+  fz?: number;
 }
 
 export interface EntitySnap {
@@ -32,7 +35,9 @@ export interface EntitySnap {
   m?: string;
 }
 
-const KIND_MODEL: Record<EntityKind, string> = { crawler: 'crawler', dweller: 'dweller', watcher: 'watcher', smiler: 'smiler', mimic: 'avatar' };
+const KIND_MODEL: Record<EntityKind, string> = { hound: 'hound', howler: 'howler', smiler: 'smiler', skinstealer: 'avatar', faceling: 'faceling' };
+/** stinger takes per kind (audio files keep their original names) */
+const STING_FILE: Record<string, string> = { hound: 'crawler', howler: 'watcher', smiler: 'smiler', skinstealer: 'mimic' };
 /** Lead-in (s) before the hit in every sting_* sound; must match STING_PRE in tools/audio/build_audio.py. */
 const STING_PRE = 0.5;
 
@@ -46,6 +51,10 @@ export class Entity {
   state: 'wander' | 'investigate' | 'notice' | 'chase' | 'stalk' | 'lunge' | 'flee' | 'lurk' = 'wander';
   touch = 0;
   stung = false;
+  moved = 0;
+  watched = false;
+  /** skin-stealer reveal progress (0 = still wearing the disguise) */
+  reveal = 0;
   path: [number, number][] = [];
   pathT = 0;
   goal: { x: number; z: number } | null = null;
@@ -105,15 +114,16 @@ export class EntityManager {
   private lastSting: Record<string, number> = {};
   private lastTake: Record<string, number> = {};
   /** Non-positional scare stinger (own loud bus). Every sting_* file has STING_PRE s of lead-in before its hit. */
-  sting(kind: 'crawler' | 'watcher' | 'smiler' | 'mimic', gain = 1) {
+  sting(kind: 'hound' | 'howler' | 'smiler' | 'skinstealer', gain = 1) {
+    const file = 'sting_' + STING_FILE[kind];
     const t = this.game.time;
     if (t - (this.lastSting[kind] ?? -99) < 12) return false;
     this.lastSting[kind] = t;
-    const n = this.game.audio.variants('sting_' + kind).length;
+    const n = this.game.audio.variants(file).length;
     let v = Math.floor(Math.random() * n);
     if (n > 1 && v === this.lastTake[kind]) v = (v + 1) % n;
     this.lastTake[kind] = v;
-    this.game.audio.play('sting_' + kind, { gain, bus: 'sting', variant: v });
+    this.game.audio.play(file, { gain, bus: 'sting', variant: v });
     return true;
   }
   onChase?: () => void;
@@ -136,6 +146,7 @@ export class EntityManager {
         const pm = mats.map((mm) => {
           const s = (mm as THREE.MeshStandardMaterial).clone();
           if (m.geometry.getAttribute('color')) s.vertexColors = true;
+          if (kind === 'howler') s.color.setScalar(0.22); // vertex colours arrive brightened; it should read near-black
           if (s.name.startsWith('Glow')) {
             s.emissiveIntensity = 6;
             s.toneMapped = false;
@@ -172,7 +183,7 @@ export class EntityManager {
 
   targets(): Target[] {
     const p = this.game.player;
-    const out: Target[] = [{ id: 'me', x: p.pos.x, z: p.pos.z, alive: p.alive, lit: p.flashlight }];
+    const out: Target[] = [{ id: 'me', x: p.pos.x, z: p.pos.z, alive: p.alive, lit: p.flashlight, fx: -Math.sin(p.yaw), fz: -Math.cos(p.yaw) }];
     out.push(...this.remoteTargets());
     out.push(...this.game.bots.targets());
     return out;
@@ -211,13 +222,13 @@ export class EntityManager {
     const e = new Entity(this.nextId++, kind, obj, t.clips);
     e.pos.set(x, 0, z);
     obj.position.copy(e.pos);
-    if (kind !== 'smiler') obj.add(blobShadow(kind === 'watcher' ? 0.45 : 0.7, kind === 'watcher' ? 0.35 : 0.5));
+    if (kind !== 'smiler') obj.add(blobShadow(kind === 'howler' ? 0.45 : 0.7, kind === 'howler' ? 0.35 : 0.5));
     this.root.add(obj);
     this.list.push(e);
-    e.play(kind === 'watcher' || kind === 'mimic' ? 'idle' : 'idle');
-    const snd = kind === 'crawler' || kind === 'dweller' ? 'crawler_rasp' : kind === 'watcher' ? 'watcher_drone' : kind === 'smiler' ? 'smiler_drone' : null;
-    if (snd) e.voice = this.game.audio.play(snd, { loop: true, pos: e.pos, gain: kind === 'watcher' ? 0.5 : 0.7, refDistance: kind === 'watcher' ? 3 : 1.5, maxDistance: 40, occlude: true, reverb: 0.3 });
-    if (kind === 'mimic') {
+    e.play(kind === 'howler' || kind === 'skinstealer' ? 'idle' : 'idle');
+    const snd = kind === 'hound' ? 'crawler_rasp' : kind === 'howler' ? 'watcher_drone' : kind === 'smiler' ? 'smiler_drone' : null;
+    if (snd) e.voice = this.game.audio.play(snd, { loop: true, pos: e.pos, gain: kind === 'howler' ? 0.5 : 0.7, refDistance: kind === 'howler' ? 3 : 1.5, maxDistance: 40, occlude: true, reverb: 0.3 });
+    if (kind === 'skinstealer') {
       const names = this.game.net?.peerNames() ?? [];
       e.mimicName = names.length ? names[Math.floor(Math.random() * names.length)] : this.game.bots.names()[0] ?? 'Wanderer';
     }
@@ -253,7 +264,7 @@ export class EntityManager {
     this.spawnT -= dt;
     const max = playerSafe ? 0 : 1 + Math.floor(this.tension * (2 + def.id)) + Math.max(0, this.remoteTargets().length > 0 ? 1 : 0);
     if (this.spawnT <= 0 && this.list.length < max) {
-      this.spawnT = this.rng.range(25, 55) * (1.2 - this.tension * 0.6);
+      this.spawnT = this.rng.range(25, 55) * (1.2 - this.tension * 0.6) * (this.def!.id === 0 ? 2.2 : 1);
       const p = g.player.pos;
       const [gx, gz] = this.cellOf(p.x, p.z);
       const dark = g.world!.cache.zone(gx, gz) === Z_DARK || g.world!.sampleE(p.x, p.z) < 0.08;
@@ -298,10 +309,15 @@ export class EntityManager {
       if (e.mixer) {
         // crawlers move in unsettling stop-motion bursts
         e.twitchT -= dt;
-        if ((e.kind === 'crawler' || e.kind === 'dweller') && e.anim === 'idle' && e.twitchT > 0) {
+        if ((e.kind === 'hound') && e.anim === 'idle' && e.twitchT > 0) {
           /* hold pose */
         } else e.mixer.update(dt);
         if (e.twitchT < -0.3 && Math.random() < dt * 0.8) e.twitchT = 0.08 + Math.random() * 0.25;
+      }
+      if (e.reveal > 0) {
+        e.reveal = Math.min(1, e.reveal + dt * 1.6);
+        const k = e.reveal * e.reveal * (3 - 2 * e.reveal);
+        e.obj.scale.set(1 - 0.18 * k, 1 + 0.32 * k, 1 - 0.18 * k);
       }
       if (e.kind === 'smiler') {
         e.obj.position.y = 1.4 + Math.sin(e.life * 1.3) * 0.05;
@@ -317,9 +333,10 @@ export class EntityManager {
       const me = this.game.player;
       if (me.alive && e.visible > 0.5) {
         const d = Math.hypot(e.pos.x - me.pos.x, e.pos.z - me.pos.z);
-        const reach = e.kind === 'watcher' ? 1.1 : e.kind === 'smiler' ? 0.9 : 0.85;
+        const reach = e.kind === 'howler' ? 1.1 : e.kind === 'smiler' ? 0.9 : 0.85;
         const [gx, gz] = this.cellOf(me.pos.x, me.pos.z);
-        const lethal = d < reach && (e.state === 'chase' || e.state === 'lunge' || e.kind === 'watcher') && !inHub(this.def.id, gx, gz);
+        const watcherHeld = e.kind === 'howler' && this.visibleToCamera(e.pos, 1.6);
+        const lethal = d < reach && !watcherHeld && (e.state === 'chase' || e.state === 'lunge' || e.kind === 'howler') && !inHub(this.def.id, gx, gz);
         // a short grace period so brushing past an entity isn't instant death
         e.touch = lethal ? e.touch + dt : 0;
         if (e.touch > 0.25) void this.game.die(e.kind, e);
@@ -384,12 +401,11 @@ export class EntityManager {
     const losTo = (t: Target) => g.collider.los(e.pos.x, e.pos.z, t.x, t.z);
 
     switch (e.kind) {
-      case 'crawler':
-      case 'dweller':
-      case 'mimic': {
-        const chaseSpeed = e.kind === 'mimic' ? 5.0 : e.kind === 'dweller' ? 4.8 : 4.6;
-        if (nearest && nd < (e.kind === 'dweller' ? 16 : 20) && losTo(nearest) && (nd < 7 || nearest.lit || g.world!.sampleE(nearest.x, nearest.z) > 0.12)) {
-          if (e.kind === 'mimic' && e.state !== 'chase' && nd > 4) {
+      case 'hound':
+      case 'skinstealer': {
+        const chaseSpeed = e.kind === 'skinstealer' ? 5.0 : e.kind === 'hound' ? 4.8 : 4.6;
+        if (nearest && nd < (e.kind === 'hound' ? 16 : 20) && losTo(nearest) && (nd < 7 || nearest.lit || g.world!.sampleE(nearest.x, nearest.z) > 0.12)) {
+          if (e.kind === 'skinstealer' && e.state !== 'chase' && nd > 4) {
             // mimics walk toward you like a person would, then turn
             e.state = 'stalk';
           } else if (e.state !== 'chase' && e.state !== 'notice') {
@@ -408,12 +424,13 @@ export class EntityManager {
           const before = e.timer;
           e.timer -= dt;
           // start the stinger early so its reverse swell peaks exactly on the scream
-          if (before > STING_PRE && e.timer <= STING_PRE && e.target.id === 'me') this.sting(e.kind === 'mimic' ? 'mimic' : 'crawler');
+          if (before > STING_PRE && e.timer <= STING_PRE && e.target.id === 'me') this.sting(e.kind === 'skinstealer' ? 'skinstealer' : 'hound');
           if (e.timer <= 0) {
-            g.audio.play('crawler_scream', { pos: e.pos, gain: 1, reverb: 0.4, occlude: true, rate: e.kind === 'mimic' ? 0.82 : e.kind === 'dweller' ? 0.9 : 1 });
+            g.audio.play('crawler_scream', { pos: e.pos, gain: 1, reverb: 0.4, occlude: true, rate: e.kind === 'skinstealer' ? 0.82 : e.kind === 'hound' ? 0.9 : 1 });
             this.onChase?.();
             e.state = 'chase';
             e.timer = 6;
+            if (e.kind === 'skinstealer') e.reveal = 0.001;
           }
           break;
         }
@@ -434,10 +451,10 @@ export class EntityManager {
           if (losTo(t)) e.timer = 6;
           e.timer -= dt;
           const dd = Math.hypot(t.x - e.pos.x, t.z - e.pos.z);
-          if (dd < 2.2 && e.kind !== 'mimic') e.play('lunge', 0.1, true);
-          else e.play(e.kind === 'mimic' ? 'run' : 'crawl', 0.15);
+          if (dd < 2.2 && e.kind !== 'skinstealer') e.play('lunge', 0.1, true);
+          else e.play(e.kind === 'skinstealer' ? 'run' : 'crawl', 0.15);
           const sp = this.moveAlong(e, chaseSpeed, dt);
-          if (e.mixer && e.kind !== 'mimic') e.mixer.timeScale = 0.6 + sp / 2.5;
+          if (e.mixer && e.kind !== 'skinstealer') e.mixer.timeScale = 0.6 + sp / 2.5;
           e.stepT -= dt * (sp / 1.2);
           if (e.stepT <= 0) {
             e.stepT = 1;
@@ -460,8 +477,8 @@ export class EntityManager {
         if (e.state === 'investigate') {
           e.timer -= dt;
           const sp = this.moveAlong(e, 2.2, dt);
-          e.play(e.kind === 'mimic' ? 'walk' : 'crawl');
-          if (e.mixer && e.kind !== 'mimic') e.mixer.timeScale = 0.5 + sp / 3;
+          e.play(e.kind === 'skinstealer' ? 'walk' : 'crawl');
+          if (e.mixer && e.kind !== 'skinstealer') e.mixer.timeScale = 0.5 + sp / 3;
           if (e.timer <= 0 || (e.goal && Math.hypot(e.goal.x - e.pos.x, e.goal.z - e.pos.z) < 1)) e.state = 'wander';
           if (Math.random() < dt * 0.5) g.audio.play('crawler_click', { pos: e.pos, gain: 0.6, occlude: true });
           break;
@@ -473,29 +490,75 @@ export class EntityManager {
           // drift toward players over time so encounters happen
           if (nearest && Math.random() < 0.5) e.goal = { x: (e.goal.x + nearest.x) / 2, z: (e.goal.z + nearest.z) / 2 };
         }
-        const sp = this.moveAlong(e, e.kind === 'mimic' ? 1.1 : 1.0, dt);
-        e.play(sp > 0.2 ? (e.kind === 'mimic' ? 'walk' : 'crawl') : 'idle');
-        if (e.mixer && e.kind !== 'mimic') e.mixer.timeScale = sp > 0.2 ? 0.5 : 1;
-        if (Math.random() < dt * 0.15) g.audio.play(e.kind === 'dweller' ? 'dweller_knock' : 'crawler_click', { pos: e.pos, gain: 0.5, occlude: true, reverb: 0.4 });
+        const sp = this.moveAlong(e, e.kind === 'skinstealer' ? 1.1 : 1.0, dt);
+        e.play(sp > 0.2 ? (e.kind === 'skinstealer' ? 'walk' : 'crawl') : 'idle');
+        if (e.mixer && e.kind !== 'skinstealer') e.mixer.timeScale = sp > 0.2 ? 0.5 : 1;
+        if (Math.random() < dt * 0.15) g.audio.play(e.kind === 'hound' ? 'dweller_knock' : 'crawler_click', { pos: e.pos, gain: 0.5, occlude: true, reverb: 0.4 });
         break;
       }
-      case 'watcher': {
-        // moves only when no one is looking
-        const watched = this.visibleToCamera(e.pos, 1.6) || [...this.remoteTargets(), ...this.game.bots.targets()].some((t) => t.alive && t.lit && Math.hypot(t.x - e.pos.x, t.z - e.pos.z) < 15 && losTo(t));
+      case 'howler': {
+        // The Howler: it cannot move while anyone has it in view. Look away and it comes — fast.
+        const seenByMe = this.visibleToCamera(e.pos, 1.6) && g.player.alive;
+        const seenByOthers = [...this.remoteTargets(), ...this.game.bots.targets()].some((t) => {
+          if (!t.alive || t.fx === undefined || t.fz === undefined) return false;
+          const dx = e.pos.x - t.x;
+          const dz = e.pos.z - t.z;
+          const d = Math.hypot(dx, dz);
+          return d < 28 && d > 0.01 && (dx * t.fx + dz * t.fz!) / d > Math.cos((50 * Math.PI) / 180) && losTo(t);
+        });
+        const watched = seenByMe || seenByOthers;
         if (nearest) {
           e.goal = { x: nearest.x, z: nearest.z };
           if (!watched) {
-            this.moveAlong(e, nd > 10 ? 3.2 : 2.0, dt);
-            e.play('walk', 0.1);
+            // unseen: closes the gap in silent lurches
+            e.timer -= dt;
+            if (e.timer <= 0) {
+              e.timer = 0.12 + Math.random() * 0.1;
+              this.moveAlong(e, (nd > 12 ? 9 : 6.5) * 2.2, 0.1);
+            }
+            e.play('walk', 0.05);
             e.state = 'chase';
+            e.moved += dt;
           } else {
             e.play('idle', 0.05);
             e.yaw = Math.atan2(nearest.x - e.pos.x, nearest.z - e.pos.z);
             e.seen += dt;
-            if (e.seen > 0.5 && !e.stung) e.stung = this.sting('watcher', 0.8);
+            // you catch it somewhere new: the dread sting, a sharp breath
+            if (e.moved > 0.6 && seenByMe) {
+              if (this.sting('howler', 0.85)) g.audio.play('breath_panic', { gain: 0.5 });
+              e.moved = 0;
+            }
           }
         }
-        if (e.life > 70 && watched === false && nd > 18) e.life = 999;
+        e.watched = watched;
+        if (e.life > 90 && !watched && nd > 22) e.life = 999;
+        break;
+      }
+      case 'faceling': {
+        // Facelings (lore): human-shaped, featureless, mostly harmless. It stops and turns its blank
+        // face toward you, follows at a distance, and backs away if you come close.
+        const d = nearest ? nd : Infinity;
+        if (nearest && d < 14 && losTo(nearest)) {
+          e.yaw = Math.atan2(nearest.x - e.pos.x, nearest.z - e.pos.z);
+          if (d < 4.5) {
+            e.goal = { x: e.pos.x - (nearest.x - e.pos.x), z: e.pos.z - (nearest.z - e.pos.z) };
+            const sp = this.moveAlong(e, 1.3, dt);
+            e.play(sp > 0.2 ? 'walk' : 'idle', 0.2);
+          } else {
+            e.play(e.seen > 3 ? 'tilt' : 'idle', 0.3, e.seen > 3);
+            e.seen += dt;
+          }
+        } else {
+          e.seen = 0;
+          if (!e.goal || Math.random() < dt * 0.1) {
+            const a = Math.random() * Math.PI * 2;
+            e.goal = { x: e.pos.x + Math.cos(a) * 12, z: e.pos.z + Math.sin(a) * 12 };
+          }
+          const sp = this.moveAlong(e, 0.9, dt);
+          e.play(sp > 0.2 ? 'walk' : 'idle', 0.3);
+        }
+        e.state = 'wander';
+        if (e.life > 120 && nd > 25) e.life = 999;
         break;
       }
       case 'smiler': {
@@ -553,7 +616,7 @@ export class EntityManager {
     const now = performance.now();
     const dt = Math.min(2, Math.max(0.05, (now - this.lastSnap) / 1000));
     this.lastSnap = now;
-    const KINDS = ['crawler', 'dweller', 'watcher', 'smiler', 'mimic'];
+    const KINDS = ['hound', 'howler', 'smiler', 'skinstealer', 'faceling'];
     const me = this.game.player.pos;
     const snaps = (raw.slice(0, 16) as EntitySnap[]).filter(
       (s) => s && Number.isInteger(s.i) && KINDS.includes(s.k) && [s.x, s.z, s.y, s.v].every((n) => typeof n === 'number' && Number.isFinite(n)) && Math.abs(s.x) < 1e5 && Math.abs(s.z) < 1e5,

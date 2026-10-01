@@ -18,4 +18,3 @@ This is the brief the game is built from. You can reuse it as a prompt to recrea
 >
 > **Assets.** Model everything in Blender via scripts. Generate textures and sounds procedurally.
 >
-> **Ship it** as a free website on GitHub Pages and Vercel.

@@ -2,7 +2,7 @@
 
 **Noclip into the Backrooms, right in your browser.** Open Backrooms is a free, open-source, hyper-real Backrooms horror game. It runs on most PCs and Macs, with no download, no account and no payments.
 
-**Play:** https://awn3x.github.io/Open-Backrooms/ (opens straight into the game once Pages is enabled; see below)
+**Play:** https://awn3x.github.io/Open-Backrooms/
 
 ## Features
 
@@ -19,12 +19,12 @@
   - Text chat with a toggleable profanity filter.
 - **AI mode:** play offline with two AI companions who follow your route in formation, match your pace, scout ahead, flee crawlers, hold the Watcher in their torchlight, back off from Smilers, mark threats and items on screen, and hand you Almond Water when you need it. There's no chat, board or voice, but you still earn coins.
 - **Bulletin board:** one global board for every player, shared through public Nostr relays. It resets every 30 days; spend more BC (earned in-game only) to keep a note up for 90 days, a year, or permanently (priced so high it's practically unreachable). You get a ping when someone pins a new note.
-- **Entities:**
-  - Crawlers: pale, emaciated things that hunt by sound.
-  - The Watcher: a faceless office worker that only moves when nobody is looking.
-  - Smilers: a grin in the dark that hates light.
-  - Mimics: they copy your friends.
-  - Pipe-dwellers: charred, long-necked things in Level 2.
+- **Entities (from Backrooms lore):**
+  - Hounds (Levels 1-2): grey, long-limbed quadrupeds with lank black hair and a mouthful of needle teeth. They hunt by sound.
+  - The Howler (Level 0, rare): a towering knot of black wire-like strands. It can't move while anyone is looking at it.
+  - Smilers: a grin and two eyes in the dark. They hate light.
+  - Facelings (Levels 1-2): people with no faces. Mostly harmless; they watch you.
+  - Skin-Stealers: they wear the face of someone you know.
   - Getting caught is a real jumpscare: the camera snaps to it as it lunges into your face, with an impact flash, shake and a hard cut to black (tone it down with *Reduce flashes*).
 - **Feel:** responsive mouse look (optional raw input), snappy movement with gentle, adjustable head bob, landing springs, stamina, crouch and real camera motion blur. A faint film-grain / old-tape look is adjustable in Settings.
 - **Sound:**
@@ -46,24 +46,11 @@ npm install
 npm run dev           # http://localhost:5173/
 npm test              # world-gen determinism / connectivity tests
 npm run build         # static site in docs/
-npm run publish-site  # test + build; commit docs/ to publish
 ```
 
-## Deploy (free)
+## How multiplayer works
 
-The site is the game: `index.html` opens straight to the game screen. `npm run build` writes a static site with relative URLs to `docs/`, and that folder is committed, so there's no build server or workflow. The same `docs/` works on GitHub Pages under `/Open-Backrooms/` and on Vercel at the root. Old `/play/` links redirect to the root and keep their invite codes. Multiplayer is peer-to-peer (WebRTC, signalled over public Nostr relays through [Trystero](https://github.com/dmotz/trystero)), so there's no server to host or pay for.
-
-**GitHub Pages (one-time setup)**
-1. Merge to `main`.
-2. In the repo, go to **Settings → Pages → Build and deployment**.
-3. Set **Source** to **Deploy from a branch**, then choose branch **`main`** and folder **`/docs`**. Click **Save**.
-4. After about a minute the game is live at `https://<user>.github.io/Open-Backrooms/`.
-
-After changing the source, run `npm run publish-site` and commit the updated `docs/`.
-
-**Vercel**
-1. Go to https://vercel.com/new and import the repository (the free Hobby plan is fine).
-2. `vercel.json` sets the build (`npm run build`, output `docs`). Click **Deploy**.
+Multiplayer is peer-to-peer (WebRTC, signalled over public Nostr relays through [Trystero](https://github.com/dmotz/trystero)), so there's no game server. Room listings and bulletin board notes travel over the same public relays.
 
 ## How the assets are made
 
