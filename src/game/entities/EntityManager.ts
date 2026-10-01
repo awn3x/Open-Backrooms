@@ -33,9 +33,10 @@ export interface EntitySnap {
 }
 
 const KIND_MODEL: Record<EntityKind, string> = { crawler: 'crawler', dweller: 'dweller', watcher: 'watcher', smiler: 'smiler', mimic: 'avatar' };
-const KIND_COLOR: Record<EntityKind, number> = { crawler: 0xa39b91, dweller: 0x4a3328, watcher: 0x0b0b0c, smiler: 0x000000, mimic: 0xffffff };
+/** Lead-in (s) before the hit in every sting_* sound; must match STING_PRE in tools/audio/build_audio.py. */
+const STING_PRE = 0.5;
 
-class Entity {
+export class Entity {
   obj: THREE.Object3D;
   mixer: THREE.AnimationMixer | null = null;
   actions = new Map<string, THREE.AnimationAction>();
@@ -44,6 +45,7 @@ class Entity {
   yaw = 0;
   state: 'wander' | 'investigate' | 'notice' | 'chase' | 'stalk' | 'lunge' | 'flee' | 'lurk' = 'wander';
   touch = 0;
+  stung = false;
   path: [number, number][] = [];
   pathT = 0;
   goal: { x: number; z: number } | null = null;
@@ -98,12 +100,21 @@ export class EntityManager {
   private frustum = new THREE.Frustum();
   private tmpM = new THREE.Matrix4();
   remoteTargets: () => Target[] = () => [];
-  private lastSting = -99;
-  private sting(gain: number, rate = 1) {
+  /** entity currently performing a jumpscare on the local player */
+  held: Entity | null = null;
+  private lastSting: Record<string, number> = {};
+  private lastTake: Record<string, number> = {};
+  /** Non-positional scare stinger (own loud bus). Every sting_* file has STING_PRE s of lead-in before its hit. */
+  sting(kind: 'crawler' | 'watcher' | 'smiler' | 'mimic', gain = 1) {
     const t = this.game.time;
-    if (t - this.lastSting < 12) return;
-    this.lastSting = t;
-    this.game.audio.play('sting_spot', { gain, rate });
+    if (t - (this.lastSting[kind] ?? -99) < 12) return false;
+    this.lastSting[kind] = t;
+    const n = this.game.audio.variants('sting_' + kind).length;
+    let v = Math.floor(Math.random() * n);
+    if (n > 1 && v === this.lastTake[kind]) v = (v + 1) % n;
+    this.lastTake[kind] = v;
+    this.game.audio.play('sting_' + kind, { gain, bus: 'sting', variant: v });
+    return true;
   }
   onChase?: () => void;
 
@@ -125,8 +136,6 @@ export class EntityManager {
         const pm = mats.map((mm) => {
           const s = (mm as THREE.MeshStandardMaterial).clone();
           if (m.geometry.getAttribute('color')) s.vertexColors = true;
-          if (/_Skin$/.test(s.name) && kind !== 'mimic') s.color.set(KIND_COLOR[kind]);
-          if (kind === 'watcher' && /_Skin$/.test(s.name)) s.roughness = 0.25;
           if (s.name.startsWith('Glow')) {
             s.emissiveIntensity = 6;
             s.toneMapped = false;
@@ -272,6 +281,11 @@ export class EntityManager {
     const targets = this.targets();
     for (const e of this.list) {
       e.life += dt;
+      if (e === this.held) {
+        // posed by Game.updateScare (the jumpscare); only animate
+        e.mixer?.update(dt);
+        continue;
+      }
       if (this.authority) this.think(e, dt, targets);
       else {
         e.pos.lerp(e.netTarget, damp(8, dt));
@@ -308,10 +322,7 @@ export class EntityManager {
         const lethal = d < reach && (e.state === 'chase' || e.state === 'lunge' || e.kind === 'watcher') && !inHub(this.def.id, gx, gz);
         // a short grace period so brushing past an entity isn't instant death
         e.touch = lethal ? e.touch + dt : 0;
-        if (e.touch > 0.25) {
-          void this.game.die(e.kind);
-          this.game.camera.lookAt(e.pos.x, 1.3, e.pos.z);
-        }
+        if (e.touch > 0.25) void this.game.die(e.kind, e);
       }
     }
   }
@@ -387,15 +398,19 @@ export class EntityManager {
             e.target = nearest;
             e.timer = 0.9;
             g.audio.play('crawler_click', { pos: e.pos, gain: 0.9, occlude: true, reverb: 0.3 });
+            // the room drops out under the click: the silence before the scare
+            if (nearest.id === 'me') g.audio.duck(0.75, 0.2, 1.4, 3);
           }
         }
         if (e.state === 'notice' && e.target) {
           e.yaw = Math.atan2(e.target.x - e.pos.x, e.target.z - e.pos.z);
           e.play('idle', 0.1);
+          const before = e.timer;
           e.timer -= dt;
+          // start the stinger early so its reverse swell peaks exactly on the scream
+          if (before > STING_PRE && e.timer <= STING_PRE && e.target.id === 'me') this.sting(e.kind === 'mimic' ? 'mimic' : 'crawler');
           if (e.timer <= 0) {
-            g.audio.play(e.kind === 'mimic' ? 'static_burst' : 'crawler_scream', { pos: e.pos, gain: 0.9, reverb: 0.4, occlude: true });
-            if (e.target.id === 'me') this.sting(0.5);
+            g.audio.play('crawler_scream', { pos: e.pos, gain: 1, reverb: 0.4, occlude: true, rate: e.kind === 'mimic' ? 0.82 : e.kind === 'dweller' ? 0.9 : 1 });
             this.onChase?.();
             e.state = 'chase';
             e.timer = 6;
@@ -466,7 +481,7 @@ export class EntityManager {
       }
       case 'watcher': {
         // moves only when no one is looking
-        const watched = this.visibleToCamera(e.pos, 1.6) || this.remoteTargets().some((t) => t.lit && Math.hypot(t.x - e.pos.x, t.z - e.pos.z) < 15 && losTo(t));
+        const watched = this.visibleToCamera(e.pos, 1.6) || [...this.remoteTargets(), ...this.game.bots.targets()].some((t) => t.alive && t.lit && Math.hypot(t.x - e.pos.x, t.z - e.pos.z) < 15 && losTo(t));
         if (nearest) {
           e.goal = { x: nearest.x, z: nearest.z };
           if (!watched) {
@@ -477,7 +492,7 @@ export class EntityManager {
             e.play('idle', 0.05);
             e.yaw = Math.atan2(nearest.x - e.pos.x, nearest.z - e.pos.z);
             e.seen += dt;
-            if (e.seen > 0.5 && e.seen < 0.6) this.sting(0.35, 0.7);
+            if (e.seen > 0.5 && !e.stung) e.stung = this.sting('watcher', 0.8);
           }
         }
         if (e.life > 70 && watched === false && nd > 18) e.life = 999;
@@ -498,7 +513,7 @@ export class EntityManager {
           e.target = litOn!;
           e.timer = 7;
           g.audio.play('smiler_hiss', { pos: e.pos, gain: 1, reverb: 0.4 });
-          if (litOn!.id === 'me') this.sting(0.6);
+          if (litOn!.id === 'me') this.sting('smiler');
         }
         if (e.state === 'chase' && e.target) {
           const t = alive.find((a) => a.id === e.target!.id);
@@ -527,7 +542,22 @@ export class EntityManager {
     return this.list.map((e) => ({ i: e.id, k: e.kind, x: +e.pos.x.toFixed(2), z: +e.pos.z.toFixed(2), y: +e.yaw.toFixed(2), a: e.anim, v: +e.visible.toFixed(2), m: e.mimicName || undefined }));
   }
 
-  async applySnapshot(snaps: EntitySnap[]) {
+  private lastSnap = 0;
+  /**
+   * Apply the level authority's entity state. The authority is just another player's browser, so
+   * nothing is trusted: bad kinds/values are dropped, entities can't move faster than they could
+   * run, and new ones can't be spawned right on top of the local player.
+   */
+  async applySnapshot(raw: unknown) {
+    if (!Array.isArray(raw)) return;
+    const now = performance.now();
+    const dt = Math.min(2, Math.max(0.05, (now - this.lastSnap) / 1000));
+    this.lastSnap = now;
+    const KINDS = ['crawler', 'dweller', 'watcher', 'smiler', 'mimic'];
+    const me = this.game.player.pos;
+    const snaps = (raw.slice(0, 16) as EntitySnap[]).filter(
+      (s) => s && Number.isInteger(s.i) && KINDS.includes(s.k) && [s.x, s.z, s.y, s.v].every((n) => typeof n === 'number' && Number.isFinite(n)) && Math.abs(s.x) < 1e5 && Math.abs(s.z) < 1e5,
+    );
     const ids = new Set(snaps.map((s) => s.i));
     for (const e of [...this.list])
       if (!ids.has(e.id)) {
@@ -537,14 +567,21 @@ export class EntityManager {
     for (const s of snaps) {
       let e = this.list.find((x) => x.id === s.i);
       if (!e) {
+        if (Math.hypot(s.x - me.x, s.z - me.z) < 6) continue;
         e = await this.spawn(s.k, s.x, s.z);
         this.nextId--;
         e.id = s.i;
       }
-      e.netTarget.set(s.x, 0, s.z);
+      // speed limit: fastest entity runs ~5.6 m/s
+      const dx = s.x - e.netTarget.x;
+      const dz = s.z - e.netTarget.z;
+      const d = Math.hypot(dx, dz);
+      const maxStep = 7 * dt + 0.5;
+      const k = d > maxStep && e.netTarget.lengthSq() > 0 ? maxStep / d : 1;
+      e.netTarget.set(e.netTarget.lengthSq() > 0 ? e.netTarget.x + dx * k : s.x, 0, e.netTarget.lengthSq() > 0 ? e.netTarget.z + dz * k : s.z);
       e.yaw = s.y;
-      e.visible = s.v;
-      if (s.a) e.play(s.a);
+      e.visible = Math.max(0, Math.min(1, s.v));
+      if (typeof s.a === 'string' && e.actions.has(s.a)) e.play(s.a);
       e.state = s.a === 'crawl' || s.a === 'run' || s.a === 'lunge' ? 'chase' : 'wander';
     }
   }

@@ -30,12 +30,13 @@ function template() {
   return tpl;
 }
 
+// the hoodie is baked as neutral grey knit; these tint it (the texture keeps the weave and grime)
 export const OUTFITS: Record<string, number> = {
-  hoodie_olive: 0xffffff,
-  hoodie_red: 0xff6a5c,
-  hoodie_blue: 0x7f9dff,
-  hazmat_yellow: 0xffe35a,
-  janitor_grey: 0xb0b0b0,
+  hoodie_olive: 0x9ba57a,
+  hoodie_red: 0xe0453a,
+  hoodie_blue: 0x5a78d8,
+  hazmat_yellow: 0xffd23a,
+  janitor_grey: 0x8f949a,
 };
 
 function nameTag(text: string) {

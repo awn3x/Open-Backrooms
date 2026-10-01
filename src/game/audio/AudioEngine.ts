@@ -11,7 +11,7 @@ export interface PlayOpts {
   rate?: number;
   loop?: boolean;
   reverb?: number;
-  bus?: 'sfx' | 'amb' | 'ui' | 'voice';
+  bus?: 'sfx' | 'amb' | 'ui' | 'voice' | 'sting';
   hrtf?: boolean;
   refDistance?: number;
   maxDistance?: number;
@@ -27,6 +27,7 @@ export interface Voice {
   filter?: BiquadFilterNode;
   pos?: THREE.Vector3;
   occlude: boolean;
+  sting?: boolean;
   baseGain: number;
   stop: (fade?: number) => void;
   setPos: (x: number, y: number, z: number) => void;
@@ -38,6 +39,8 @@ export class AudioEngine {
   buses: Record<string, GainNode> = {};
   reverb: ConvolverNode;
   reverbIn: GainNode;
+  private duckGain: GainNode;
+  private stingOut: GainNode;
   private buffers = new Map<string, AudioBuffer>();
   private loading = new Map<string, Promise<AudioBuffer | null>>();
   private manifest: AudioManifest = {};
@@ -57,11 +60,24 @@ export class AudioEngine {
     comp.release.value = 0.2;
     this.master = this.ctx.createGain();
     this.master.connect(comp).connect(this.ctx.destination);
+    // ambience runs through a ducker so scares can pull the room out from under you
+    this.duckGain = this.ctx.createGain();
+    this.duckGain.connect(this.master);
     for (const b of ['sfx', 'amb', 'ui', 'voice']) {
       const g = this.ctx.createGain();
-      g.connect(this.master);
+      g.connect(b === 'amb' ? this.duckGain : this.master);
       this.buses[b] = g;
     }
+    // stingers and jumpscares: their own hard limiter, bypassing the master compressor so hits stay loud
+    const lim = this.ctx.createDynamicsCompressor();
+    lim.threshold.value = -2;
+    lim.knee.value = 0;
+    lim.ratio.value = 20;
+    lim.attack.value = 0.001;
+    lim.release.value = 0.08;
+    this.stingOut = this.ctx.createGain();
+    this.buses.sting = this.ctx.createGain();
+    this.buses.sting.connect(lim).connect(this.stingOut).connect(this.ctx.destination);
     this.reverb = this.ctx.createConvolver();
     this.reverbIn = this.ctx.createGain();
     const rvOut = this.ctx.createGain();
@@ -76,6 +92,24 @@ export class AudioEngine {
     this.buses.amb.gain.value = settings.ambience;
     this.buses.voice.gain.value = settings.voice;
     this.buses.ui.gain.value = 0.8;
+    this.buses.sting.gain.value = settings.sfx;
+    this.stingOut.gain.value = settings.master;
+  }
+
+  /** Pull ambience (room tone, hum) down by `depth` (0..1), hold, then recover. */
+  duck(depth: number, attack = 0.15, hold = 1, release = 2.5) {
+    const g = this.duckGain.gain;
+    const t = this.ctx.currentTime;
+    g.cancelScheduledValues(t);
+    g.setValueAtTime(g.value, t);
+    g.linearRampToValueAtTime(1 - depth, t + attack);
+    g.setValueAtTime(1 - depth, t + attack + hold);
+    g.linearRampToValueAtTime(1, t + attack + hold + release);
+  }
+
+  /** Silence everything except stingers (the jumpscare's hard cut). */
+  hush(fade = 0.08) {
+    for (const v of this.voices) if (!v.sting) v.stop(fade);
   }
 
   async init() {
@@ -178,6 +212,7 @@ export class AudioEngine {
       filter,
       pos: o.pos ? new THREE.Vector3(o.pos.x, o.pos.y, o.pos.z) : undefined,
       occlude: !!o.occlude,
+      sting: o.bus === 'sting',
       baseGain: base,
       stop: (fade = 0.05) => {
         const t = ctx.currentTime;

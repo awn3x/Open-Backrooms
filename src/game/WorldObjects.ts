@@ -53,6 +53,8 @@ export class WorldObjects {
   exitAnim: THREE.Object3D | null = null;
   private hubBoxes: Box[] = [];
 
+  /** endless mode: the level has no way out */
+  noExit = false;
   constructor(
     private world: ChunkManager,
     private collider: Collider,
@@ -101,7 +103,7 @@ export class WorldObjects {
   /** Called whenever the chunk set changes. */
   async syncChunk(c: LoadedChunk) {
     for (const p of c.layout.pickups) await this.spawnPickup(p);
-    if (c.layout.exit && !this.exitObj) await this.spawnExit(c.layout.exit.x, c.layout.exit.z, c.layout.exit.rot);
+    if (c.layout.exit && !this.exitObj && !this.noExit) await this.spawnExit(c.layout.exit.x, c.layout.exit.z, c.layout.exit.rot);
   }
 
   unloadChunk(c: LoadedChunk) {
@@ -147,7 +149,8 @@ export class WorldObjects {
     this.exitAnim = o.getObjectByName('Door') ?? o.getObjectByName('Lid') ?? null;
     this.root.add(o);
     const f = new THREE.Vector3(Math.sin(rot), 0, Math.cos(rot));
-    const label = def.exit === 'door' ? 'Exit' : def.exit === 'hatch' ? 'Maintenance Hatch' : 'Elevator';
+    // lore: Level 0's halls give way to Level 1's garages; Level 1 has a stairwell down; Level 2's stairs lead to an elevator
+    const label = def.exit === 'door' ? 'Door to the parking levels' : def.exit === 'hatch' ? 'Stairwell down' : 'Elevator';
     this.interactables.push({ id: 'exit', kind: 'exit', pos: new THREE.Vector3(x, 1, z).addScaledVector(f, def.exit === 'hatch' ? 0 : 0.8), radius: 1.8, label });
     // a light over the exit so it reads as special
     const l = new THREE.PointLight(def.exit === 'elevator' ? 0xffd08a : 0xff3a2a, 2.5, 6, 2);
