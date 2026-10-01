@@ -7,7 +7,7 @@ import { settings, saveSettings, profile, saveProfile, spend, onCoins } from '..
 import type { Game } from '../Game';
 import { detectRegion, REGION_NAMES, type Region } from '../net/Net';
 import { lobby, type GameMode, type Listing } from '../net/Lobby';
-import { board, TIERS, nextReset } from '../net/Board';
+import { board, TIERS, nextReset, BOARD_SLOTS, type Note } from '../net/Board';
 import { censor, containsProfanity, sanitize } from './profanity';
 import { LEVELS } from '../levels/levels';
 import { OUTFITS } from '../entities/Avatar';
@@ -485,7 +485,7 @@ export class UI {
     const w = this.openModal(`<div class="pause"><h2>PAUSED</h2><div class="sub">${LEVELS[this.game.level].name} — ${LEVELS[this.game.level].subtitle}${this.online ? ` · ${esc(net?.label ?? '')}` : ''}</div>
       ${this.onlineLink ? `<div class="field"><label>Invite link</label><div class="linkbox"><input type="text" readonly value="${esc(this.onlineLink)}"><button class="btn copy">COPY</button></div></div>` : ''}
       ${this.online ? `<div class="field"><label>Players (${players.length + 1}/8)</label><div class="list players"><div class="item"><span>${esc(settings.name)} (you)</span><span class="ping">L${this.game.level}</span></div>${players.map((p) => `<div class="item"><span>${esc(p.name)}${net?.hostPeer === p.id ? ' (host)' : ''}</span><span class="row" style="gap:10px"><span class="ping">L${p.level} · ${Math.round(p.ping)}ms</span>${net?.isHost ? `<button class="btn kick" data-id="${esc(p.id)}">KICK</button>` : ''}</span></div>`).join('')}</div></div>` : ''}
-      <div class="pause-actions"><button class="btn primary resume">RESUME</button><button class="btn settings">SETTINGS</button><button class="btn how">CONTROLS</button><button class="btn leave">LEAVE TO MENU</button></div></div>`);
+      <div class="pause-actions"><button class="btn primary resume">RESUME</button><button class="btn settings">SETTINGS</button><button class="btn how">CONTROLS</button><button class="btn leave">LEAVE TO MENU</button></div><div class="hint">ESC to resume</div></div>`);
     $('.resume', w).onclick = () => this.closeModal(true);
     w.querySelectorAll<HTMLButtonElement>('.kick').forEach((b) => {
       b.onclick = () => {
@@ -582,29 +582,30 @@ export class UI {
   openBoard() {
     const connected = this.game.mode !== 'ai';
     if (connected) board.connect();
-    const notes = board.list();
+    const { pinned, overflow } = board.split();
     const days = Math.max(1, Math.ceil((nextReset() - Date.now()) / 86400000));
-    const w = this.openModal(`<h2>BULLETIN BOARD</h2><div class="sub">${
+    const post = (n: Note, i: number) =>
+      `<div class="post ${n.expires === Infinity ? 'forever' : ''}" style="--r:${((i * 37) % 5) - 2}deg">${esc(n.text)}<div class="meta">${esc(n.name)}${n.mine ? ' (you)' : ''} · ${new Date(n.t).toLocaleDateString()} · ${n.expires === Infinity ? 'permanent' : `until ${new Date(n.expires).toLocaleDateString()}`}</div></div>`;
+    const w = this.openModal(`<div class="board-panel"><h2>Bulletin Board</h2><div class="sub">${
       connected
-        ? `One board for every player, everywhere. It clears in <b>${days} day${days === 1 ? '' : 's'}</b> (every 30 days) — pay more BC to keep a note up through resets. BC are earned in-game only.`
+        ? `One board for every player, everywhere. Clears in <b>${days} day${days === 1 ? '' : 's'}</b>. Pay more BC to keep a note up through resets.`
         : 'AI mode has no bulletin board, chat or voice.'
     }</div>
-      <div class="posts">${
-        notes.length
-          ? notes
-              .map(
-                (n, i) => `<div class="post ${n.expires === Infinity ? 'forever' : ''}" style="--r:${((i * 37) % 5) - 2}deg">${esc(n.text)}<div class="meta">— ${esc(n.name)}${n.mine ? ' (you)' : ''} · ${new Date(n.t).toLocaleDateString()} · ${n.expires === Infinity ? 'permanent' : `until ${new Date(n.expires).toLocaleDateString()}`}</div></div>`,
-              )
-              .join('')
-          : `<p class="sub">${connected ? 'No notes yet (or still loading). Be the first to leave a warning.' : ''}</p>`
-      }</div>
       ${
         connected
-          ? `<div class="field" style="margin-top:16px"><label>Your note (max 160)</label><textarea class="note" maxlength="160" placeholder="e.g. Arrows near the wet carpet LIE. Head for the red ones."></textarea></div>
-      <div class="field"><label>How long it stays up</label><div class="choice tiers">${TIERS.map((t, i) => `<button data-i="${i}" class="${i === 0 ? 'on' : ''}" ${profile.coins < t.price ? 'disabled' : ''}><b>${t.price.toLocaleString()} BC</b><small>${t.name}</small></button>`).join('')}</div></div>
-      <div class="row"><button class="btn primary pin">PIN NOTE</button><span class="sub" style="margin:0">Balance ${profile.coins.toLocaleString()} BC</span><span class="status"></span></div>`
+          ? `<div class="section-label">On the board <span>${pinned.length} / ${BOARD_SLOTS}</span></div>
+      <div class="posts">${pinned.length ? pinned.map(post).join('') : '<p class="sub">Nothing pinned yet (or still loading). Be the first to leave a warning.</p>'}</div>
+      ${
+        overflow.length
+          ? `<details class="overflow" ${board.full ? 'open' : ''}><summary class="section-label"><span class="lbl">The pile</span><span>${overflow.length} note${overflow.length === 1 ? '' : 's'} that didn't fit</span></summary><div class="posts">${overflow.map(post).join('')}</div></details>`
           : ''
-      }`);
+      }
+      ${board.full ? '<div class="notice"><b>Board full.</b> New notes won\'t be pinned on the board itself. They go to the pile, which everyone sees when they open the board.</div>' : ''}
+      <div class="field" style="margin-top:18px"><label>Your note <span class="count">0 / 160</span></label><textarea class="note" maxlength="160" placeholder="e.g. Arrows near the wet carpet LIE. Head for the red ones."></textarea></div>
+      <div class="field"><label>How long it stays up</label><div class="choice tiers">${TIERS.map((t, i) => `<button data-i="${i}" class="${i === 0 ? 'on' : ''}" ${profile.coins < t.price ? 'disabled' : ''}><b>${t.price.toLocaleString()} BC</b><small>${t.name}</small></button>`).join('')}</div></div>
+      <div class="row"><button class="btn primary pin">${board.full ? 'ADD TO PILE' : 'PIN NOTE'}</button><span class="sub" style="margin:0">Balance ${profile.coins.toLocaleString()} BC</span><span class="status"></span></div>`
+          : ''
+      }</div>`);
     board.onChange = () => {
       if (w.isConnected && !($('.note', w) as HTMLTextAreaElement | null)?.value) this.openBoard();
     };
@@ -615,16 +616,19 @@ export class UI {
         w.querySelectorAll('.tiers button').forEach((x) => x.classList.toggle('on', x === b));
       };
     });
+    const note = w.querySelector('.note') as HTMLTextAreaElement | null;
+    if (note) note.oninput = () => ($('.count', w).textContent = `${note.value.length} / 160`);
     const pin = w.querySelector('.pin') as HTMLButtonElement | null;
-    if (pin)
+    if (pin && note)
       pin.onclick = () => {
-        const text = sanitize(($('.note', w) as HTMLTextAreaElement).value, 160);
+        const text = sanitize(note.value, 160);
         if (text.length < 3) return this.status('Write a little more.');
         if (containsProfanity(text)) return this.status('Please keep notes appropriate.');
         if (!spend(tier.price)) return this.status('Not enough BC.');
+        const full = board.full;
         void board.post(settings.name || 'Wanderer', censor(text), tier);
-        this.toast(tier.id === 'month' ? 'Note pinned until the next reset.' : 'Note pinned.');
-        ($('.note', w) as HTMLTextAreaElement).value = '';
+        this.toast(full ? 'Board full: your note went on the pile.' : tier.id === 'month' ? 'Note pinned until the next reset.' : 'Note pinned.');
+        note.value = '';
         setTimeout(() => this.openBoard(), 300);
       };
   }
@@ -716,11 +720,12 @@ export class UI {
   }
 
   showEnding() {
-    const w = this.openModal(`<h2>DAYLIGHT?</h2><div class="sub">The elevator opened onto a parking lot. Real sun. Real air. You blinked — and the hum came back.</div>
-      <p>You escaped all three levels. +100 BC. Total escapes: ${profile.escapes}.</p>
-      <p class="sub">The Backrooms reshuffle every time you enter. Go again?</p>
-      <button class="btn primary">NOCLIP AGAIN</button>`);
-    $('.btn', w).onclick = () => this.closeModal(true);
+    const w = this.openModal(`<div class="pause ending"><div class="ds-kicker">You found a way out</div><h2>Daylight?</h2>
+      <div class="sub">The elevator opened onto a parking lot. Real sun. Real air. You blinked, and the hum came back.</div>
+      <div class="ds-stats"><span>All three levels</span><span>+100 BC</span><span>Escapes ${profile.escapes}</span></div>
+      <div class="pause-actions"><button class="btn primary again">NOCLIP AGAIN</button></div>
+      <div class="hint">The Backrooms reshuffle every time you enter</div></div>`);
+    $('.again', w).onclick = () => this.closeModal(true);
   }
 
   refreshCoins() {

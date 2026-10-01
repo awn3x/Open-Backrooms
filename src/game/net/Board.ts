@@ -13,6 +13,8 @@ const DAY = 86400000;
 export const CYCLE = 30 * DAY;
 const EPOCH = Date.UTC(2026, 0, 1);
 const MAX_PER_AUTHOR = 3;
+/** how many notes physically fit on the cork board in the base; the rest go to the overflow pile */
+export const BOARD_SLOTS = 12;
 
 export interface Tier {
   id: 'month' | 'quarter' | 'year' | 'forever';
@@ -73,6 +75,8 @@ export class Board {
   /** fired for notes that arrive after the board was opened for this session (the "ping") */
   onNew?: (n: Note) => void;
   onChange?: () => void;
+  /** persistent listeners (the 3D board in the base), unlike onChange which the open panel owns */
+  readonly listeners = new Set<() => void>();
   private since = Date.now();
   private unsub: (() => void) | null = null;
 
@@ -85,7 +89,7 @@ export class Board {
       this.notes.set(n.id, n);
       if (n.t > this.since && !n.mine) this.onNew?.(n);
       this.save();
-      this.onChange?.();
+      this.changed();
     });
   }
 
@@ -113,11 +117,31 @@ export class Board {
     if (n) {
       this.notes.set(n.id, n);
       this.save();
-      this.onChange?.();
+      this.changed();
     }
   }
 
+  /**
+   * Notes split into those pinned on the physical board and the overflow pile.
+   * First come, first pinned: permanent notes, then the oldest notes hold the slots until
+   * they expire, so a note posted to a full board lands in the overflow pile (newest first).
+   */
+  split(): { pinned: Note[]; overflow: Note[] } {
+    const byAge = this.list().sort((a, b) => (b.expires === Infinity ? 1 : 0) - (a.expires === Infinity ? 1 : 0) || a.t - b.t);
+    return { pinned: byAge.slice(0, BOARD_SLOTS), overflow: byAge.slice(BOARD_SLOTS).reverse() };
+  }
+
+  get full() {
+    return this.list().length >= BOARD_SLOTS;
+  }
+
+  private changed() {
+    this.onChange?.();
+    for (const l of this.listeners) l();
+  }
+
   private load() {
+    queueMicrotask(() => this.changed());
     try {
       const arr = JSON.parse(localStorage.getItem('ob.board2') || '[]') as Note[];
       for (const n of arr) if (n && typeof n.id === 'string') this.notes.set(n.id, { ...n, expires: n.expires ?? Infinity, mine: n.author === nostr.pubkey });

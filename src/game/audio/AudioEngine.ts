@@ -142,6 +142,13 @@ export class AudioEngine {
     return p;
   }
 
+  /** Register a buffer made in code under `name` (and as its only variant). */
+  setBuffer(name: string, buf: AudioBuffer | AudioBuffer[]) {
+    const bufs = Array.isArray(buf) ? buf : [buf];
+    this.manifest[name] = bufs.map((_, i) => `${name}#${i}`);
+    bufs.forEach((b, i) => this.buffers.set(`${name}#${i}`, b));
+  }
+
   async preload(names: string[]) {
     await Promise.all(names.flatMap((n) => this.variants(n).map((f) => this.load(f))));
   }

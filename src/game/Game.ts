@@ -17,6 +17,7 @@ import { Sparks } from './render/Sparks';
 import { Player, type StepEvent } from './player/Player';
 import { AudioEngine, type Voice } from './audio/AudioEngine';
 import { loadProtos, setMaxAnisotropy } from './assets';
+import { ventAir, ductTick } from './audio/synth';
 import type { Protos } from './world/mesher';
 import { WorldObjects, HUB_CENTER, type Interactable } from './WorldObjects';
 import { EntityManager, type Entity } from './entities/EntityManager';
@@ -76,6 +77,9 @@ export class Game {
   private heartT = 0;
   private eventT = 8;
   private sparkT = 1;
+  /** air loops on the closest vents, keyed by position */
+  private ventVoices = new Map<string, Voice>();
+  private ventT = 0;
   private coinDist = 0;
   private seatStand: { x: number; z: number } | null = null;
   /** this life's stats, for the death screen */
@@ -161,6 +165,8 @@ export class Game {
     this.protos = await loadProtos((f) => progress(0.1 + f * 0.4, 'Loading models'));
     progress(0.55, 'Loading sound');
     await this.audio.init();
+    this.audio.setBuffer('vent_air', ventAir(this.audio.ctx));
+    this.audio.setBuffer('duct_tick', [1, 2, 3].map((k) => ductTick(this.audio.ctx, k)));
     await this.audio.preload([
       'step_carpet', 'step_concrete', 'step_metal', 'step_water', 'land_carpet', 'land_concrete', 'land_metal', 'cloth',
       'breath_in', 'breath_out', 'breath_panic', 'heartbeat', 'hum', 'spark', 'tube_flicker', 'ballast_click',
@@ -198,6 +204,8 @@ export class Game {
     for (const a of this.ambience) a.stop(0.8);
     for (const h of this.hum) h?.stop(0.3);
     this.hum = [];
+    for (const v of this.ventVoices.values()) v.stop(0.3);
+    this.ventVoices.clear();
     this.powerEvt = null;
     WU.uPower.value.w = 0;
 
@@ -484,6 +492,38 @@ export class Game {
             this.entities.noise(s.x, s.z, 6, 'spark');
           }
         }
+    }
+    // vents breathe: air loops on the nearest few, and now and then the ductwork ticks
+    this.ventT -= dt;
+    if (this.ventT <= 0 && this.world) {
+      this.ventT = 0.4;
+      const near: { k: string; x: number; y: number; z: number; d: number }[] = [];
+      for (const c of this.world.chunks.values())
+        for (const v of c.layout.props) {
+          if (v.kind !== 'vent_wall' && v.kind !== 'vent_ceiling') continue;
+          const d = Math.hypot(v.x - p.pos.x, v.z - p.pos.z);
+          if (d < 12) near.push({ k: `${v.x.toFixed(2)},${v.z.toFixed(2)}`, x: v.x + Math.sin(v.rot) * 0.05, y: v.y, z: v.z + Math.cos(v.rot) * 0.05, d });
+        }
+      near.sort((a, b) => a.d - b.d);
+      const keep = new Set(near.slice(0, 3).map((v) => v.k));
+      for (const [k, v] of this.ventVoices)
+        if (!keep.has(k) || !this.audio.voices.has(v)) {
+          v.stop(0.6);
+          this.ventVoices.delete(k);
+        }
+      for (const v of near.slice(0, 3)) {
+        if (this.ventVoices.has(v.k)) continue;
+        const voice = this.audio.play('vent_air', { loop: true, gain: 0, pos: v, bus: 'amb', refDistance: 0.6, maxDistance: 14, occlude: true, rate: 0.92 + (Math.abs(v.x * 7.3 + v.z * 3.1) % 1) * 0.16 });
+        if (voice) {
+          voice.baseGain = 0.22;
+          voice.gain.gain.setTargetAtTime(0.22, this.audio.ctx.currentTime, 0.5);
+          this.ventVoices.set(v.k, voice);
+        }
+      }
+      if (near.length && near[0].d < 7 && Math.random() < 0.035) {
+        const v = near[0];
+        this.audio.play('duct_tick', { pos: v, gain: 0.5, rate: 0.85 + Math.random() * 0.3, reverb: 0.35, occlude: true });
+      }
     }
     // distant events
     this.eventT -= dt;

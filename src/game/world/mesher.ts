@@ -183,6 +183,11 @@ function pipe(b: GeoBuilder, p: Pipe) {
   ring(p.r * 1.3, 0.02, 0.07, true);
 }
 
+// wall vent opening (matches the grille's inner frame in tools/blender/props.py vent_wall) and duct depth
+const VENT_W = 0.27;
+const VENT_H = 0.13;
+const VENT_DEPTH = 0.045;
+
 export function buildChunk(L: ChunkLayout, protos: Protos): ChunkMeshes {
   const def: LevelDef = LEVELS[L.level];
   const c = def.cell;
@@ -200,17 +205,77 @@ export function buildChunk(L: ChunkLayout, protos: Protos): ChunkMeshes {
 
   // ---------------------------------------------------------------- walls & pillars
   const walls = new GeoBuilder();
+  const props = new GeoBuilder(true, true);
+  // wall vents are real openings: find the face each one sits on, so that face is built with a hole
+  const vents = L.props.filter((p) => p.kind === 'vent_wall');
+  const ventOn = (nx: number, nz: number, plane: number, a0: number, a1: number) =>
+    vents.find((p) => Math.abs(Math.sin(p.rot) - nx) < 0.01 && Math.abs(Math.cos(p.rot) - nz) < 0.01 && Math.abs((nx ? p.x : p.z) - plane) < 0.01 && (nx ? p.z : p.x) > a0 && (nx ? p.z : p.x) < a1);
+  /** one side of a wall box, with the vent's opening cut out and a duct cavity behind it */
+  const wallSide = (nx: number, nz: number, plane: number, a0: number, a1: number): boolean => {
+    const v = ventOn(nx, nz, plane, a0, a1);
+    if (!v) return false;
+    const ac = nx ? v.z : v.x;
+    const h0 = ac - VENT_W / 2;
+    const h1 = ac + VENT_W / 2;
+    const y0 = v.y - VENT_H / 2;
+    const y1 = v.y + VENT_H / 2;
+    const fwd = nx < 0 || nz > 0; // box() winds these faces with a increasing
+    const sg = fwd ? 1 : -1;
+    const P = (a: number, y: number, d = 0) => (nx ? [plane - nx * d, y, a] : [a, y, plane - nz * d]);
+    const rect = (b0: number, b1: number, yb: number, yt: number) => {
+      const [s0, s1] = fwd ? [b0, b1] : [b1, b0];
+      walls.quad([P(s0, yb), P(s1, yb), P(s1, yt), P(s0, yt)], [nx, 0, nz], [[(sg * s0) / ws, yb / ws], [(sg * s1) / ws, yb / ws], [(sg * s1) / ws, yt / ws], [(sg * s0) / ws, yt / ws]]);
+    };
+    rect(a0, h0, 0, H);
+    rect(h1, a1, 0, H);
+    rect(h0, h1, 0, y0);
+    rect(h0, h1, y1, H);
+    // duct: sheet-metal sides and a dark back, so the grille reads as a hole into the wall
+    const D = VENT_DEPTH;
+    const side = [0.16, 0.16, 0.15, 1];
+    const back = [0.025, 0.025, 0.025, 1];
+    const m = [0.55, 0.6, 0, 0];
+    const face = (q: number[][], n: number[], col: number[]) => {
+      // wind CCW as seen from the normal side
+      const e1 = [q[1][0] - q[0][0], q[1][1] - q[0][1], q[1][2] - q[0][2]];
+      const e2 = [q[2][0] - q[0][0], q[2][1] - q[0][1], q[2][2] - q[0][2]];
+      const cr = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
+      if (cr[0] * n[0] + cr[1] * n[1] + cr[2] * n[2] < 0) q.reverse();
+      props.quad(q, n, [[0, 0], [1, 0], [1, 1], [0, 1]], col, m);
+    };
+    const ax = nx ? [0, 0, 1] : [1, 0, 0]; // direction of increasing a
+    face([P(h0, y0), P(h1, y0), P(h1, y0, D), P(h0, y0, D)], [0, 1, 0], side); // floor of the duct
+    face([P(h0, y1), P(h1, y1), P(h1, y1, D), P(h0, y1, D)], [0, -1, 0], side);
+    face([P(h0, y0), P(h0, y1), P(h0, y1, D), P(h0, y0, D)], ax, side);
+    face([P(h1, y0), P(h1, y1), P(h1, y1, D), P(h1, y0, D)], ax.map((k) => -k), side);
+    face([P(h0, y0, D), P(h1, y0, D), P(h1, y1, D), P(h0, y1, D)], [nx, 0, nz], back);
+    return true;
+  };
   for (let j = 0; j < N; j++)
     for (let i = 0; i < N; i++) {
       const gx = gx0 + i;
       const gz = gz0 + j;
       if (L.wallZ[idx(i, j)]) {
         const x = gx * c;
-        walls.box(x - t / 2, 0, gz * c - t / 2 + eps, x + t / 2, H, (gz + 1) * c + t / 2 - eps, ws, 0b110011);
+        const a0 = gz * c - t / 2 + eps;
+        const a1 = (gz + 1) * c + t / 2 - eps;
+        let faces = 0b110011;
+        if (vents.length) {
+          if (wallSide(1, 0, x + t / 2, a0, a1)) faces &= ~1;
+          if (wallSide(-1, 0, x - t / 2, a0, a1)) faces &= ~2;
+        }
+        walls.box(x - t / 2, 0, a0, x + t / 2, H, a1, ws, faces);
       }
       if (L.wallX[idx(i, j)]) {
         const z = gz * c;
-        walls.box(gx * c - t / 2 + eps, 0, z - t / 2, (gx + 1) * c + t / 2 - eps, H, z + t / 2, ws, 0b110011);
+        const a0 = gx * c - t / 2 + eps;
+        const a1 = (gx + 1) * c + t / 2 - eps;
+        let faces = 0b110011;
+        if (vents.length) {
+          if (wallSide(0, 1, z + t / 2, a0, a1)) faces &= ~16;
+          if (wallSide(0, -1, z - t / 2, a0, a1)) faces &= ~32;
+        }
+        walls.box(a0, 0, z - t / 2, a1, H, z + t / 2, ws, faces);
       }
       if (L.pillar[idx(i, j)]) {
         const ps = def.pillarSize / 2;
@@ -241,7 +306,6 @@ export function buildChunk(L: ChunkLayout, protos: Protos): ChunkMeshes {
 
   // ---------------------------------------------------------------- lights
   const lens = new GeoBuilder(true, true);
-  const props = new GeoBuilder(true, true);
   const linkOf = (state: number) => (state === L_FLICKER ? 2 : state === L_DEAD || state === L_HANGING ? 0 : 1);
   for (const lf of L.lights) {
     const link = linkOf(lf.state);
