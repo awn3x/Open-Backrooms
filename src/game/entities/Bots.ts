@@ -16,6 +16,7 @@ import { findPath } from './Pathfinding';
 import { inHub } from '../world/layout';
 import type { Target } from './EntityManager';
 import { profile, saveProfile } from '../core/Settings';
+import { STEP_TRIM } from '../audio/AudioEngine';
 
 const BOT_NAMES = ['Marisol', 'Dex', 'Okonkwo', 'Juniper', 'Tomasz', 'Priya', 'Hollis'];
 const DIRS: [number, number][] = [
@@ -528,7 +529,8 @@ export class Bots {
         b.stepPhase += (actual * dt) / (actual > 3.6 ? 1.35 : crouch ? 0.7 : 0.9);
         if (b.stepPhase >= 1) {
           b.stepPhase = 0;
-          g.audio.play(g.surfaceAt(b.pos.x, b.pos.z), { pos: { x: b.pos.x, y: 0.1, z: b.pos.z }, gain: crouch ? 0.15 : actual > 3.6 ? 0.75 : 0.4, occlude: true, reverb: 0.3, hrtf: false, rate: 0.95 + Math.random() * 0.1 });
+          const surf = g.surfaceAt(b.pos.x, b.pos.z);
+          g.audio.play(surf, { pos: { x: b.pos.x, y: 0.1, z: b.pos.z }, gain: (crouch ? 0.15 : actual > 3.6 ? 0.75 : 0.4) * (STEP_TRIM[surf] ?? 1), occlude: true, reverb: 0.3, hrtf: false, rate: 0.95 + Math.random() * 0.1 });
         }
       }
     }

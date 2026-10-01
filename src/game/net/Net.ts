@@ -4,6 +4,7 @@
 // Each level has an authority (oldest peer id on that level) that simulates entities.
 
 import * as THREE from 'three';
+import { STEP_TRIM } from '../audio/AudioEngine';
 import { joinRoom, selfId, type Room } from 'trystero';
 import type { Game } from '../Game';
 import { Avatar } from '../entities/Avatar';
@@ -432,7 +433,8 @@ export class Net {
         p.stepPhase += (p.speed * dt) / (p.speed > 3 ? 1.05 : 0.72);
         if (p.stepPhase >= 1) {
           p.stepPhase = 0;
-          g.audio.play(g.surfaceAt(p.pos.x, p.pos.z), { pos: { x: p.pos.x, y: 0.1, z: p.pos.z }, gain: p.crouch ? 0.2 : p.speed > 3 ? 0.9 : 0.5, occlude: true, reverb: 0.3, hrtf: false });
+          const surf = g.surfaceAt(p.pos.x, p.pos.z);
+          g.audio.play(surf, { pos: { x: p.pos.x, y: 0.1, z: p.pos.z }, gain: (p.crouch ? 0.2 : p.speed > 3 ? 0.9 : 0.5) * (STEP_TRIM[surf] ?? 1), occlude: true, reverb: 0.3, hrtf: false });
         }
       }
       if (p.voice) {

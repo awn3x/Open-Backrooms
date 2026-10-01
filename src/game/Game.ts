@@ -18,6 +18,7 @@ import { Player, type StepEvent } from './player/Player';
 import { AudioEngine, type Voice } from './audio/AudioEngine';
 import { loadProtos, setMaxAnisotropy } from './assets';
 import { ventAir, ductTick } from './audio/synth';
+import { STEP_TRIM } from './audio/AudioEngine';
 import type { Protos } from './world/mesher';
 import { WorldObjects, HUB_CENTER, type Interactable } from './WorldObjects';
 import { EntityManager, type Entity } from './entities/EntityManager';
@@ -289,7 +290,7 @@ export class Game {
       this.audio.play(`land_${def.surface}`, { gain: 0.5 + 0.4 * e.loudness, reverb: 0.25 });
     } else {
       const name = this.surfaceAt(p.x, p.z);
-      const g = (this.player.crouching ? 0.25 : this.player.sprinting ? 0.95 : 0.5) * (name === 'step_metal' ? 0.7 : 1);
+      const g = (this.player.crouching ? 0.25 : this.player.sprinting ? 0.95 : 0.5) * (STEP_TRIM[name] ?? 1);
       this.audio.play(name, { gain: g, rate: 0.94 + Math.random() * 0.12, pan: e.foot * 0.18, reverb: this.player.sprinting ? 0.3 : 0.18 });
       if (Math.random() < (this.player.sprinting ? 0.5 : 0.18)) this.audio.play('cloth', { gain: 0.12 + (this.player.sprinting ? 0.1 : 0), rate: 0.9 + Math.random() * 0.2 });
     }
