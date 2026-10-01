@@ -187,3 +187,8 @@ button { font: inherit; color: inherit; }
 .ping-mark.item { color: #9fd8ff; }
 .ping-mark.exit { color: #9dff9d; }
 #ui.scaring .ping-mark { visibility: hidden; }
+
+.pause-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 18px; max-width: 320px; }
+.pause-actions .btn { width: 100%; padding: 13px 16px; font-size: 13px; text-align: left; letter-spacing: 0.14em; }
+.pause-actions .btn.leave { margin-top: 10px; color: #c9a59a; border-color: rgba(201,165,154,0.35); }
+.modal-wrap { backdrop-filter: blur(6px) brightness(0.55); }

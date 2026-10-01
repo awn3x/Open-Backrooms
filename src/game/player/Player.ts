@@ -59,6 +59,8 @@ export class Player {
   eye = 1.62;
   crouching = false;
   sprinting = false;
+  private crouchLatch = false;
+  private sprintLatch = false;
   stamina = 1;
   fear = 0; // 0..1 set by the game from entity proximity / darkness
   radius = 0.28;
@@ -117,10 +119,11 @@ export class Player {
     let mx = 0;
     let mz = 0;
     if (!this.frozen && this.alive && !this.seated) {
-      if (inp.down('KeyW') || inp.down('ArrowUp')) mz -= 1;
-      if (inp.down('KeyS') || inp.down('ArrowDown')) mz += 1;
-      if (inp.down('KeyA') || inp.down('ArrowLeft')) mx -= 1;
-      if (inp.down('KeyD') || inp.down('ArrowRight')) mx += 1;
+      const K = settings.keys;
+      if (inp.down(K.forward) || inp.down('ArrowUp')) mz -= 1;
+      if (inp.down(K.back) || inp.down('ArrowDown')) mz += 1;
+      if (inp.down(K.left) || inp.down('ArrowLeft')) mx -= 1;
+      if (inp.down(K.right) || inp.down('ArrowRight')) mx += 1;
       if (pad) {
         mx += pad.mx;
         mz += pad.mz;
@@ -131,9 +134,16 @@ export class Player {
       mx /= ml;
       mz /= ml;
     }
-    const wantCrouch = !this.frozen && (inp.down('KeyC') || inp.down('ControlLeft') || !!pad?.crouch);
+    const K = settings.keys;
+    if (settings.crouchToggle && inp.hit(K.crouch)) this.crouchLatch = !this.crouchLatch;
+    if (settings.sprintToggle && inp.hit(K.sprint)) this.sprintLatch = !this.sprintLatch;
+    const crouchKey = settings.crouchToggle ? this.crouchLatch : inp.down(K.crouch) || inp.down('ControlLeft');
+    const wantCrouch = !this.frozen && (crouchKey || !!pad?.crouch);
+    if (wantCrouch) this.sprintLatch = false;
     this.crouching = wantCrouch;
-    const wantSprint = !this.crouching && (inp.down('ShiftLeft') || inp.down('ShiftRight') || !!pad?.sprint) && mz < 0;
+    const sprintKey = settings.sprintToggle ? this.sprintLatch : inp.down(K.sprint) || inp.down('ShiftRight');
+    const wantSprint = !this.crouching && (sprintKey || !!pad?.sprint) && mz < 0;
+    if (mz >= 0) this.sprintLatch = false;
     const exhausted = this.stamina < 0.05;
     this.sprinting = wantSprint && !exhausted && ml > 0.1;
     const maxSpeed = this.crouching ? 1.4 : this.sprinting ? 5.4 : 2.9;
@@ -152,7 +162,7 @@ export class Player {
     this.vel.z = lerp(this.vel.z, tz, k);
 
     // jump
-    if (this.onGround && !this.frozen && inp.hit('Space') && !this.crouching && this.stamina > 0.1) {
+    if (this.onGround && !this.frozen && inp.hit(settings.keys.jump) && !this.crouching && this.stamina > 0.1) {
       this.vy = 3.6;
       this.onGround = false;
       this.stamina -= 0.08;

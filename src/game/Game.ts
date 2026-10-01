@@ -77,6 +77,7 @@ export class Game {
   private eventT = 8;
   private sparkT = 1;
   private coinDist = 0;
+  private exposure = 1;
   private seatStand: { x: number; z: number } | null = null;
   /** this life's stats, for the death screen */
   lifeTime = 0;
@@ -321,9 +322,10 @@ export class Game {
       this.camera.rotation.set(0.02 + Math.sin(this.time * 0.31) * 0.02, -t * 1.6 + 2.2, Math.sin(this.time * 0.23) * 0.01, 'YXZ');
     } else if (!this.paused) {
       p.frozen = false;
+      const K = settings.keys;
       if (p.seated) {
         // any movement key gets you back up; resting in the base slowly restores sanity
-        if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space'].some((k) => inp.down(k)) || inp.hit('KeyE')) {
+        if ([K.forward, K.back, K.left, K.right, K.jump].some((k) => inp.down(k)) || inp.hit(K.interact)) {
           p.seated = null;
           if (this.seatStand) p.teleport(this.seatStand.x, this.seatStand.z, p.yaw);
           this.audio.play('cloth', { gain: 0.4, rate: 1.1 });
@@ -331,12 +333,12 @@ export class Game {
       }
       p.update(dt);
       // flashlight
-      if (inp.hit('KeyF') || (inp.pad()?.flash && !this.lastPadFlash)) {
+      if (inp.hit(K.flashlight) || (inp.pad()?.flash && !this.lastPadFlash)) {
         p.flashlight = !p.flashlight;
         this.audio.play('ui_click', { gain: 0.5, rate: 0.6 });
       }
       this.lastPadFlash = !!inp.pad()?.flash;
-      if (inp.hit('KeyE') || inp.hit('Mouse0') || inp.pad()?.use) this.interact();
+      if (inp.hit(K.interact) || inp.hit('Mouse0') || inp.pad()?.use) this.interact();
     }
 
     world.update(p.pos.x, p.pos.z);
@@ -406,6 +408,12 @@ export class Game {
     this.updateAudio(dt, zone, safe, threat);
     this.sparks.update(dt);
     this.net?.update(dt);
+
+    // eye adaptation: dark corridors slowly open up, stepping under a light briefly overexposes
+    const lum = Math.max(0.05, WU.uCamE.value);
+    const target = clamp(0.55 / Math.pow(lum, 0.35), 0.75, 1.9);
+    this.exposure += (target - this.exposure) * Math.min(1, dt * (target < this.exposure ? 2.5 : 0.7));
+    this.post.composite.uniforms.uExposure.value = this.exposure * LEVELS[this.level].exposure;
 
     // fades
     this.fade += (this.fadeTarget - this.fade) * Math.min(1, dt * 2.5);
