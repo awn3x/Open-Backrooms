@@ -44,9 +44,9 @@ button { font: inherit; color: inherit; }
 #hud .talk { position: absolute; left: 50%; top: 22px; transform: translateX(-50%); font-size: 13px; color: var(--ok); }
 #hud .safe { position: absolute; left: 50%; top: 22px; transform: translateX(-50%); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ok); opacity: 0.8; }
 
-#title-card { position: absolute; inset: 0; display: grid; place-items: center; font: 600 40px var(--sans); letter-spacing: 0.3em; text-transform: uppercase; text-align: center; opacity: 0; transition: opacity 1.2s; }
+#title-card { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; font: 300 46px var(--sans); letter-spacing: 0.32em; padding-left: 0.32em; color: #efe7cf; text-transform: uppercase; text-align: center; opacity: 0; transition: opacity 1.2s; text-shadow: 0 2px 24px rgba(0,0,0,0.7); }
 #title-card.show { opacity: 1; }
-#title-card small { display: block; font-size: 14px; letter-spacing: 0.25em; color: var(--dim); margin-top: 10px; font-weight: 400; }
+#title-card small { display: block; font-size: 12px; letter-spacing: 0.32em; color: #b8b09a; margin-top: 16px; font-weight: 500; }
 
 #toasts { position: absolute; right: 30px; bottom: 70px; display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
 .toast { font-family: var(--sans); font-size: 13px; color: #d9d2bd; background: linear-gradient(90deg, rgba(0,0,0,0), rgba(0,0,0,0.6)); border-right: 1px solid rgba(233,226,198,0.5); padding: 7px 14px 7px 28px; animation: toastIn 0.3s ease-out, toastOut 0.6s ease-in 3.4s forwards; }

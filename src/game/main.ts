@@ -207,8 +207,6 @@ game.input.onLockChange = (locked) => {
 
 const boot = ui.bootScreen(async () => {
   game.audio.resume();
-  // start hearing room announcements now, so name checks and invite lookups are instant later
-  lobby.browse();
   if (inviteRoom) {
     game.menuMode = true;
     await game.start('solo', 'menu', 0);
