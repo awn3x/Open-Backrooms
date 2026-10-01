@@ -1,10 +1,13 @@
+import * as THREE from 'three';
 // DOM user interface: boot, main menu, online lobby, HUD, chat, shop,
 // lockers, bulletin board, settings, pause, death/ending.
 
 import './ui.css';
 import { settings, saveSettings, profile, saveProfile, spend, onCoins } from '../core/Settings';
 import type { Game } from '../Game';
-import { detectRegion, REGION_NAMES, type Region, loadBoard } from '../net/Net';
+import { detectRegion, REGION_NAMES, type Region } from '../net/Net';
+import { lobby, type GameMode, type Listing } from '../net/Lobby';
+import { board, TIERS, nextReset } from '../net/Board';
 import { censor, containsProfanity, sanitize } from './profanity';
 import { LEVELS } from '../levels/levels';
 import { OUTFITS } from '../entities/Avatar';
@@ -18,11 +21,13 @@ const h = (html: string) => {
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 export interface MenuActions {
-  solo: () => void;
-  ai: () => void;
+  solo: (mode: GameMode, level: number) => void;
+  ai: (mode: GameMode, level: number) => void;
   publicWorld: (region: Region) => void;
-  createRoom: (name: string, password: string) => void;
-  joinRoom: (name: string, password: string) => void;
+  createRoom: (name: string, password: string, mode: GameMode, level: number) => void;
+  /** room id (`room:name~host` or `public:EU:1`) or a bare legacy room name */
+  joinRoom: (id: string, password: string) => void;
+  kick: (peerId: string) => void;
   leave: () => void;
   applySettings: () => void;
 }
@@ -46,7 +51,6 @@ const SHOP: ShopItem[] = [
 ];
 
 const ITEM_NAMES: Record<string, string> = { almond: 'Almond Water', battery: 'Battery Pack' };
-export const BOARD_COST = 20;
 
 export class UI {
   root: HTMLElement;
@@ -63,6 +67,7 @@ export class UI {
   online = false;
   onlineLink = '';
   region: Region = detectRegion();
+  private pings: { el: HTMLElement; pos: THREE.Vector3; t: number }[] = [];
 
   constructor(
     private game: Game,
@@ -179,8 +184,8 @@ export class UI {
       b.onclick = () => {
         this.game.audio.play('ui_click', { bus: 'ui' });
         const a = b.dataset.a;
-        if (a === 'solo') this.actions.solo();
-        else if (a === 'ai') this.actions.ai();
+        if (a === 'solo') this.pickMode('PLAY SOLO', (m, l) => this.actions.solo(m, l));
+        else if (a === 'ai') this.pickMode('PLAY WITH AI', (m, l) => this.actions.ai(m, l));
         else if (a === 'online') this.openOnline();
         else if (a === 'settings') this.openSettings();
         else if (a === 'how') this.openHow();
@@ -237,22 +242,66 @@ export class UI {
     this.game.input.lock();
   }
 
+  private modeFields(prefix = '') {
+    return `<div class="field"><label>Mode</label><div class="choice ${prefix}mode">
+        <button data-m="escape" class="on"><b>Escape run</b><small>Level 0 → Level 1 → Level 2 → ???. Find each level's way out.</small></button>
+        <button data-m="endless"><b>Endless</b><small>One level, no way out. Survive as long as you can; coins keep coming.</small></button>
+      </div></div>
+      <div class="field ${prefix}lvl hidden"><label>Level</label><div class="choice">${LEVELS.map((l, i) => `<button data-l="${i}" class="${i === 0 ? 'on' : ''}"><b>Level ${i}</b><small>${l.subtitle}</small></button>`).join('')}</div></div>`;
+  }
+
+  private wireMode(w: HTMLElement, prefix = ''): () => { mode: GameMode; level: number } {
+    let mode: GameMode = 'escape';
+    let level = 0;
+    w.querySelectorAll<HTMLButtonElement>(`.${prefix}mode button`).forEach((b) => {
+      b.onclick = () => {
+        mode = b.dataset.m as GameMode;
+        w.querySelectorAll(`.${prefix}mode button`).forEach((x) => x.classList.toggle('on', x === b));
+        $(`.${prefix}lvl`, w).classList.toggle('hidden', mode !== 'endless');
+      };
+    });
+    w.querySelectorAll<HTMLButtonElement>(`.${prefix}lvl button`).forEach((b) => {
+      b.onclick = () => {
+        level = Number(b.dataset.l);
+        w.querySelectorAll(`.${prefix}lvl button`).forEach((x) => x.classList.toggle('on', x === b));
+      };
+    });
+    return () => ({ mode, level: mode === 'endless' ? level : 0 });
+  }
+
+  pickMode(title: string, go: (mode: GameMode, level: number) => void) {
+    const w = this.openModal(`<h2>${title}</h2><div class="sub">How do you want to play?</div>${this.modeFields()}<button class="btn primary go">START</button>`);
+    const get = this.wireMode(w);
+    $('.go', w).onclick = () => {
+      const { mode, level } = get();
+      this.closeModal();
+      go(mode, level);
+    };
+  }
+
   openOnline() {
     const w = this.openModal(`<h2>ONLINE</h2><div class="sub">Peer-to-peer, free, no accounts. Your connection goes straight to other players.</div>
-      <div class="tabs"><button class="tab on" data-t="public">Public World</button><button class="tab" data-t="create">Create Room</button><button class="tab" data-t="join">Join Room</button></div>
-      <div data-p="public">
+      <div class="tabs"><button class="tab on" data-t="browse">Browse Games</button><button class="tab" data-t="public">Quick Join</button><button class="tab" data-t="create">Host</button><button class="tab" data-t="join">Invite Link</button></div>
+      <div data-p="browse">
+        <div class="row filter"><button class="chip on" data-f="mine">My region (${REGION_NAMES[this.region]})</button><button class="chip" data-f="all">Whole world</button><span class="sub count" style="margin:0 0 0 auto"></span></div>
+        <div class="list games"></div>
+        <div class="pw hidden field" style="margin-top:12px"><label class="pwl">Password</label><div class="linkbox"><input type="password" class="pwin" maxlength="40"><button class="btn primary pwgo">JOIN</button></div></div>
+      </div>
+      <div data-p="public" class="hidden">
         <div class="field"><label>Region (auto-detected)</label></div>
         <div class="region-pick">${(Object.keys(REGION_NAMES) as Region[]).map((r) => `<button data-r="${r}" class="${r === this.region ? 'on' : ''}">${REGION_NAMES[r]}</button>`).join('')}</div>
-        <p class="sub">You'll join the busiest world in your region with free slots (up to 8 players each). Everyone there shares the same Backrooms.</p>
-        <button class="btn primary go-public">JOIN PUBLIC WORLD</button>
+        <p class="sub">Drops you into the busiest public world in that region with a free slot (up to 8 players). Public worlds are escape runs.</p>
+        <button class="btn primary go-public">QUICK JOIN</button>
       </div>
       <div data-p="create" class="hidden">
-        <div class="field"><label>Room name (becomes your invite link)</label><input type="text" class="rname" maxlength="32" placeholder="e.g. calders-basement"></div>
-        <div class="field"><label>Password (optional)</label><input type="password" class="rpass" maxlength="40"></div>
-        <button class="btn primary go-create">CREATE &amp; ENTER</button>
+        <div class="field"><label>Room name</label><input type="text" class="rname" maxlength="32" placeholder="e.g. level-zero-crew"></div>
+        <div class="field"><label>Password (optional: players will be asked for it)</label><input type="password" class="rpass" maxlength="40"></div>
+        ${this.modeFields('h')}
+        <p class="sub">Your room is listed in Browse Games for everyone. As host you can remove players from the pause menu.</p>
+        <button class="btn primary go-create">HOST &amp; ENTER</button>
       </div>
       <div data-p="join" class="hidden">
-        <div class="field"><label>Room name or invite link</label><input type="text" class="jname" maxlength="200" placeholder="room name or https://…/play/?room=…"></div>
+        <div class="field"><label>Invite link</label><input type="text" class="jname" maxlength="300" placeholder="https://…/?room=…"></div>
         <div class="field"><label>Password (if any)</label><input type="password" class="jpass" maxlength="40"></div>
         <button class="btn primary go-join">JOIN</button>
       </div>
@@ -269,13 +318,61 @@ export class UI {
         w.querySelectorAll('.region-pick button').forEach((x) => x.classList.toggle('on', x === b));
       };
     });
+    // --- server browser
+    let all = false;
+    let pending: Listing | null = null;
+    const render = () => {
+      if (!w.isConnected) return;
+      const rows = lobby.list(all ? undefined : this.region);
+      $('.count', w).textContent = `${rows.length} game${rows.length === 1 ? '' : 's'}`;
+      $('.games', w).innerHTML = rows.length
+        ? rows
+            .map(
+              (l) => `<div class="item game"><span><b>${l.locked ? '🔒 ' : ''}${esc(l.name)}</b><small>${REGION_NAMES[l.region]} · ${l.mode === 'endless' ? `Endless · Level ${l.level}` : `Escape run · on Level ${l.level}`}</small></span>
+                <span class="row" style="gap:10px"><span class="ping">${l.players}/${l.max}</span><button class="btn join" data-id="${esc(l.id)}" ${l.players >= l.max ? 'disabled' : ''}>${l.players >= l.max ? 'FULL' : 'JOIN'}</button></span></div>`,
+            )
+            .join('')
+        : `<p class="sub">Listening for games${all ? ' worldwide' : ` in ${REGION_NAMES[this.region]}`}… hosts announce every 15 seconds. You can also Quick Join or Host one.</p>`;
+      w.querySelectorAll<HTMLButtonElement>('.join').forEach((b) => {
+        b.onclick = () => {
+          const l = lobby.listings.get(b.dataset.id ?? '');
+          if (!l) return;
+          if (!l.locked) return this.actions.joinRoom(l.id, '');
+          pending = l;
+          $('.pwl', w).textContent = `Password for "${l.name}"`;
+          $('.pw', w).classList.remove('hidden');
+          ($('.pwin', w) as HTMLInputElement).focus();
+        };
+      });
+    };
+    lobby.browse();
+    lobby.onChange = render;
+    const tick = setInterval(() => (w.isConnected ? render() : clearInterval(tick)), 3000);
+    render();
+    w.querySelectorAll<HTMLButtonElement>('.chip').forEach((c) => {
+      c.onclick = () => {
+        all = c.dataset.f === 'all';
+        w.querySelectorAll('.chip').forEach((x) => x.classList.toggle('on', x === c));
+        render();
+      };
+    });
+    const pwGo = () => {
+      const pass = ($('.pwin', w) as HTMLInputElement).value;
+      if (!pending || !pass) return this.status('Enter the password.');
+      this.actions.joinRoom(pending.id, pass);
+    };
+    $('.pwgo', w).onclick = pwGo;
+    $('.pwin', w).addEventListener('keydown', (e) => (e as KeyboardEvent).key === 'Enter' && pwGo());
+    // --- other tabs
     const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9-_]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
+    const getMode = this.wireMode(w, 'h');
     $('.go-public', w).onclick = () => this.actions.publicWorld(this.region);
     $('.go-create', w).onclick = () => {
       const n = slug(($('.rname', w) as HTMLInputElement).value);
       if (!n) return this.status('Pick a room name.');
       if (containsProfanity(n)) return this.status('Choose a different room name.');
-      this.actions.createRoom(n, ($('.rpass', w) as HTMLInputElement).value);
+      const { mode, level } = getMode();
+      this.actions.createRoom(n, ($('.rpass', w) as HTMLInputElement).value, mode, level);
     };
     $('.go-join', w).onclick = () => {
       let v = ($('.jname', w) as HTMLInputElement).value.trim();
@@ -288,9 +385,8 @@ export class UI {
       } catch {
         /* plain name */
       }
-      const n = slug(v);
-      if (!n) return this.status('Enter a room name or link.');
-      this.actions.joinRoom(n, pass);
+      if (!v) return this.status('Paste an invite link.');
+      this.actions.joinRoom(v, pass);
     };
   }
 
@@ -320,6 +416,7 @@ export class UI {
         ${this.slider('motionBlur', 'Motion blur', 0, 1.2, 0.05)}
         ${this.slider('headBob', 'Head motion', 0, 1.5, 0.05)}
         ${this.check('showFps', 'Show FPS')}
+        ${this.check('reduceFlashes', 'Reduce flashes and screen shake (jumpscares)')}
       </div>
       <div data-p="audio" class="hidden">
         ${this.slider('master', 'Master', 0, 1, 0.05)}
@@ -337,7 +434,7 @@ export class UI {
       <div data-p="social" class="hidden">
         ${this.check('chat', 'Show text chat (online)')}
         ${this.check('profanityFilter', 'Filter bad words in chat')}
-        <p class="sub">Bulletin board notes are always filtered. Nothing you type is stored on any server — messages go directly to players in your room.</p>
+        <p class="sub">Chat goes directly to players in your room and isn't stored. Bulletin board notes are filtered and are public: they're shared through public Nostr relays until they expire.</p>
       </div>`);
     w.querySelectorAll<HTMLButtonElement>('.tab').forEach((t) => {
       t.onclick = () => {
@@ -387,9 +484,15 @@ export class UI {
     const players = net ? [...net.peers.values()] : [];
     const w = this.openModal(`<h2>PAUSED</h2><div class="sub">${LEVELS[this.game.level].name} — ${LEVELS[this.game.level].subtitle}${this.online ? ` · ${esc(net?.label ?? '')}` : ''}</div>
       ${this.onlineLink ? `<div class="field"><label>Invite link</label><div class="linkbox"><input type="text" readonly value="${esc(this.onlineLink)}"><button class="btn copy">COPY</button></div></div>` : ''}
-      ${this.online ? `<div class="field"><label>Players (${players.length + 1}/8)</label><div class="list players"><div class="item"><span>${esc(settings.name)} (you)</span><span class="ping">L${this.game.level}</span></div>${players.map((p) => `<div class="item"><span>${esc(p.name)}</span><span class="ping">L${p.level} · ${Math.round(p.ping)}ms</span></div>`).join('')}</div></div>` : ''}
+      ${this.online ? `<div class="field"><label>Players (${players.length + 1}/8)</label><div class="list players"><div class="item"><span>${esc(settings.name)} (you)</span><span class="ping">L${this.game.level}</span></div>${players.map((p) => `<div class="item"><span>${esc(p.name)}${net?.hostPeer === p.id ? ' (host)' : ''}</span><span class="row" style="gap:10px"><span class="ping">L${p.level} · ${Math.round(p.ping)}ms</span>${net?.isHost ? `<button class="btn kick" data-id="${esc(p.id)}">KICK</button>` : ''}</span></div>`).join('')}</div></div>` : ''}
       <div class="row" style="margin-top:10px"><button class="btn primary resume">RESUME</button><button class="btn settings">SETTINGS</button><button class="btn how">CONTROLS</button><button class="btn leave">LEAVE TO MENU</button></div>`);
     $('.resume', w).onclick = () => this.closeModal(true);
+    w.querySelectorAll<HTMLButtonElement>('.kick').forEach((b) => {
+      b.onclick = () => {
+        this.actions.kick(b.dataset.id ?? '');
+        setTimeout(() => this.openPause(), 100);
+      };
+    });
     $('.settings', w).onclick = () => this.openSettings();
     $('.how', w).onclick = () => this.openHow();
     $('.leave', w).onclick = () => this.actions.leave();
@@ -477,23 +580,52 @@ export class UI {
   }
 
   openBoard() {
-    const net = this.game.net;
-    const posts = (net?.board ?? loadBoard()).slice().reverse();
-    const canPost = this.online && !!net;
-    const w = this.openModal(`<h2>BULLETIN BOARD</h2><div class="sub">${canPost ? `Pin a note for everyone in this world. Costs <b style="color:var(--accent)">${BOARD_COST} BC</b> (earned in-game). Keep it friendly — notes are filtered.` : 'The board is only connected in online worlds. (AI mode has no board, chat or voice.)'}</div>
-      <div class="posts">${posts.length ? posts.map((p, i) => `<div class="post" style="--r:${((i * 37) % 5) - 2}deg">${esc(p.text)}<div class="meta">— ${esc(p.name)} · ${new Date(p.t).toLocaleDateString()}</div></div>`).join('') : '<p class="sub">No notes yet. Be the first to leave a warning.</p>'}</div>
-      ${canPost ? `<div class="field" style="margin-top:16px"><label>Your note (max 160)</label><textarea class="note" maxlength="160" placeholder="e.g. Arrows near the wet carpet LIE. Head for the red ones."></textarea></div>
-      <div class="row"><button class="btn primary pin" ${profile.coins < BOARD_COST ? 'disabled' : ''}>PIN NOTE — ${BOARD_COST} BC</button><span class="status"></span></div>` : ''}`);
+    const connected = this.game.mode !== 'ai';
+    if (connected) board.connect();
+    const notes = board.list();
+    const days = Math.max(1, Math.ceil((nextReset() - Date.now()) / 86400000));
+    const w = this.openModal(`<h2>BULLETIN BOARD</h2><div class="sub">${
+      connected
+        ? `One board for every player, everywhere. It clears in <b>${days} day${days === 1 ? '' : 's'}</b> (every 30 days) — pay more BC to keep a note up through resets. BC are earned in-game only.`
+        : 'AI mode has no bulletin board, chat or voice.'
+    }</div>
+      <div class="posts">${
+        notes.length
+          ? notes
+              .map(
+                (n, i) => `<div class="post ${n.expires === Infinity ? 'forever' : ''}" style="--r:${((i * 37) % 5) - 2}deg">${esc(n.text)}<div class="meta">— ${esc(n.name)}${n.mine ? ' (you)' : ''} · ${new Date(n.t).toLocaleDateString()} · ${n.expires === Infinity ? 'permanent' : `until ${new Date(n.expires).toLocaleDateString()}`}</div></div>`,
+              )
+              .join('')
+          : `<p class="sub">${connected ? 'No notes yet (or still loading). Be the first to leave a warning.' : ''}</p>`
+      }</div>
+      ${
+        connected
+          ? `<div class="field" style="margin-top:16px"><label>Your note (max 160)</label><textarea class="note" maxlength="160" placeholder="e.g. Arrows near the wet carpet LIE. Head for the red ones."></textarea></div>
+      <div class="field"><label>How long it stays up</label><div class="choice tiers">${TIERS.map((t, i) => `<button data-i="${i}" class="${i === 0 ? 'on' : ''}" ${profile.coins < t.price ? 'disabled' : ''}><b>${t.price.toLocaleString()} BC</b><small>${t.name}</small></button>`).join('')}</div></div>
+      <div class="row"><button class="btn primary pin">PIN NOTE</button><span class="sub" style="margin:0">Balance ${profile.coins.toLocaleString()} BC</span><span class="status"></span></div>`
+          : ''
+      }`);
+    board.onChange = () => {
+      if (w.isConnected && !($('.note', w) as HTMLTextAreaElement | null)?.value) this.openBoard();
+    };
+    let tier = TIERS[0];
+    w.querySelectorAll<HTMLButtonElement>('.tiers button').forEach((b) => {
+      b.onclick = () => {
+        tier = TIERS[Number(b.dataset.i)];
+        w.querySelectorAll('.tiers button').forEach((x) => x.classList.toggle('on', x === b));
+      };
+    });
     const pin = w.querySelector('.pin') as HTMLButtonElement | null;
     if (pin)
       pin.onclick = () => {
         const text = sanitize(($('.note', w) as HTMLTextAreaElement).value, 160);
         if (text.length < 3) return this.status('Write a little more.');
         if (containsProfanity(text)) return this.status('Please keep notes appropriate.');
-        if (!spend(BOARD_COST)) return this.status('Not enough BC.');
-        net!.postBoard(censor(text), BOARD_COST);
-        this.toast('Note pinned.');
-        this.openBoard();
+        if (!spend(tier.price)) return this.status('Not enough BC.');
+        void board.post(settings.name || 'Wanderer', censor(text), tier);
+        this.toast(tier.id === 'month' ? 'Note pinned until the next reset.' : 'Note pinned.');
+        ($('.note', w) as HTMLTextAreaElement).value = '';
+        setTimeout(() => this.openBoard(), 300);
       };
   }
 
@@ -600,8 +732,44 @@ export class UI {
     }
   }
 
+  /** On-screen marker for something a teammate spotted (AI mode's stand-in for voice callouts). */
+  ping(pos: THREE.Vector3, kind: 'threat' | 'item' | 'exit', label: string) {
+    const icon = kind === 'threat' ? '!' : kind === 'exit' ? '⇧' : '+';
+    const el = h(`<div class="ping-mark ${kind}"><i>${icon}</i><span>${esc(label)}<b></b></span></div>`);
+    this.root.append(el);
+    this.pings.push({ el, pos: pos.clone(), t: kind === 'exit' ? 9 : 4.5 });
+  }
+
+  private updatePings(dt: number) {
+    const cam = this.game.camera;
+    const W = innerWidth;
+    const H = innerHeight;
+    this.pings = this.pings.filter((p) => {
+      p.t -= dt;
+      if (p.t <= 0 || !this.inGame) {
+        p.el.remove();
+        return false;
+      }
+      const v = p.pos.clone().setY(1.3).project(cam);
+      const behind = v.z > 1;
+      let x = (v.x * 0.5 + 0.5) * W;
+      let y = (-v.y * 0.5 + 0.5) * H;
+      if (behind) {
+        x = W - x;
+        y = H - 40;
+      }
+      x = Math.max(40, Math.min(W - 40, x));
+      y = Math.max(40, Math.min(H - 60, y));
+      p.el.style.transform = `translate(${x}px, ${y}px)`;
+      p.el.style.opacity = String(Math.min(1, p.t));
+      ($('b', p.el) as HTMLElement).textContent = ` ${Math.round(cam.position.distanceTo(p.pos))} m`;
+      return true;
+    });
+  }
+
   update(dt: number) {
     const g = this.game;
+    this.updatePings(dt);
     if (!this.inGame) return;
     const p = g.player;
     const bat = $('.bat', this.hud);

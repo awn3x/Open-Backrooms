@@ -19,7 +19,7 @@ import { AudioEngine, type Voice } from './audio/AudioEngine';
 import { loadProtos, setMaxAnisotropy } from './assets';
 import type { Protos } from './world/mesher';
 import { WorldObjects, HUB_CENTER, type Interactable } from './WorldObjects';
-import { EntityManager } from './entities/EntityManager';
+import { EntityManager, type Entity } from './entities/EntityManager';
 import type { Net } from './net/Net';
 import type { UI } from './ui/UI';
 import { Bots } from './entities/Bots';
@@ -31,6 +31,9 @@ export interface GameEvents {
   onEscape?: (level: number) => void;
   onLevel?: (def: LevelDef) => void;
 }
+
+/** Seconds into the catch when the image and sound cut to black; matches the hard cut in jumpscare_* sounds. */
+const SCARE_CUT = 1.25;
 
 export class Game {
   renderer: THREE.WebGLRenderer;
@@ -53,6 +56,9 @@ export class Game {
   net: Net | null = null;
   ui!: UI;
   mode: Mode = 'solo';
+  /** escape run (0 -> 1 -> 2 -> ending) or endless (one level, no exit) */
+  runMode: 'escape' | 'endless' = 'escape';
+  startLevel = 0;
   roomSeed = 0;
   run = 0;
   level = 0;
@@ -74,6 +80,10 @@ export class Game {
   private surviveT = 0;
   private powerEvt: { t: number; dir: number; r: number } | null = null;
   private fade = 1;
+  /** active jumpscare: the entity that caught us and how far into it we are */
+  private scare: { e: Entity; t: number; q0: THREE.Quaternion; cut: boolean } | null = null;
+  // always in the scene (intensity 0 when idle) so a scare never triggers a shader recompile
+  private scareLight = new THREE.PointLight(0xffe0c2, 0, 3.2, 2);
   private fadeTarget = 0;
   private transitioning = false;
   private nearIt: Interactable | null = null;
@@ -90,6 +100,7 @@ export class Game {
     this.input = new Input(canvas);
     this.sparks = new Sparks(this.scene);
     this.scene.add(this.camera);
+    this.scene.add(this.scareLight);
     this.entities = new EntityManager(this);
     this.bots = new Bots(this);
     window.addEventListener('resize', () => this.resize());
@@ -133,10 +144,10 @@ export class Game {
     await this.audio.preload([
       'step_carpet', 'step_concrete', 'step_metal', 'step_water', 'land_carpet', 'land_concrete', 'land_metal', 'cloth',
       'breath_in', 'breath_out', 'breath_panic', 'heartbeat', 'hum', 'spark', 'tube_flicker', 'ballast_click',
-      'ui_click', 'ui_hover', 'static_burst', 'bottle_open', 'drink',
+      'ui_click', 'ui_hover', 'bottle_open', 'drink',
     ]);
     progress(0.8, 'Almost there');
-    void this.audio.preload(['knock', 'slam', 'howl', 'running', 'drip', 'power_down', 'power_up', 'crawler_click', 'crawler_rasp', 'crawler_scream', 'crawler_step', 'watcher_drone', 'smiler_drone', 'smiler_hiss', 'sting_spot', 'sting_chase', 'death', 'door_open', 'hatch_open', 'elevator_ding', 'elevator_doors', 'pipe_groan', 'steam_hiss', 'dweller_knock', 'dweller_groan', 'tinnitus', 'outlet_buzz']);
+    void this.audio.preload(['knock', 'slam', 'howl', 'running', 'drip', 'power_down', 'power_up', 'crawler_click', 'crawler_rasp', 'crawler_scream', 'crawler_step', 'watcher_drone', 'smiler_drone', 'smiler_hiss', 'sting_crawler', 'sting_watcher', 'sting_smiler', 'sting_mimic', 'jumpscare', 'door_open', 'hatch_open', 'elevator_ding', 'elevator_doors', 'pipe_groan', 'steam_hiss', 'dweller_knock', 'dweller_groan', 'tinnitus', 'outlet_buzz']);
     this.lights = new LightRig(this.scene, this.preset.lights, this.preset.shadows, this.preset.shadowSize);
     progress(1, 'Ready');
   }
@@ -183,6 +194,7 @@ export class Game {
     }
     this.player.collider = this.collider;
     this.objects = new WorldObjects(world, this.collider);
+    this.objects.noExit = this.runMode === 'endless' && !this.menuMode;
     this.scene.add(this.objects.root);
     world.onChunkLoaded = (c) => void this.objects?.syncChunk(c);
     world.onChunkUnloaded = (c) => this.objects?.unloadChunk(c);
@@ -338,6 +350,7 @@ export class Game {
     p.fear = clamp(threat * 1.2 + (1 - this.sanity) * 0.5 + (dark && !p.flashlight ? 0.15 : 0), 0, 1);
     this.post.composite.uniforms.uDesat.value = (1 - this.sanity) * 0.5;
     this.post.vhs.uniforms.uGlitch.value = Math.max(0, threat - 0.6) * 0.6 + (this.sanity < 0.2 ? 0.1 * Math.random() : 0);
+    if (this.scare) this.updateScare(dt);
 
     // coins for surviving and exploring (never for real money)
     if (!safe && p.alive && !this.menuMode) {
@@ -403,7 +416,7 @@ export class Game {
       }
     } else this.breathT = Math.min(this.breathT, 0.4);
     // heartbeat
-    if (p.fear > 0.35) {
+    if (p.fear > 0.35 && p.alive) {
       this.heartT -= dt;
       if (this.heartT <= 0) {
         this.heartT = 60 / (70 + p.fear * 80);
@@ -414,7 +427,7 @@ export class Game {
     this.lights.slots.forEach((s, i) => {
       let v = this.hum[i];
       if (!v && s.key >= 0) {
-        v = this.audio.play('hum', { loop: true, gain: 0, pos: s.light.position, hrtf: false, refDistance: 1.0, maxDistance: 18, rate: 0.98 + ((s.key % 7) / 7) * 0.05 });
+        v = this.audio.play('hum', { loop: true, gain: 0, pos: s.light.position, bus: 'amb', hrtf: false, refDistance: 1.0, maxDistance: 18, rate: 0.98 + ((s.key % 7) / 7) * 0.05 });
         this.hum[i] = v;
       }
       if (v) {
@@ -554,22 +567,125 @@ export class Game {
     }
   }
 
-  async die(by: string) {
+  async die(by: string, ent?: Entity) {
     if (!this.player.alive) return;
     this.player.alive = false;
     this.player.frozen = true;
     profile.deaths++;
     profile.inventory = {}; // carried items are lost; the locker keeps what you stored
     saveProfile();
-    this.audio.play('death', { gain: 1 });
-    this.post.vhs.uniforms.uGlitch.value = 1;
-    this.events.onDeath?.(by);
-    this.fadeTarget = 1;
     this.post.composite.uniforms.uFadeCol.value.setRGB(0, 0, 0);
-    await new Promise((r) => setTimeout(r, 2600));
+    // everything else drops out; the catch sound has its own loud bus and cuts itself at SCARE_CUT
+    this.audio.hush(0.04);
+    this.audio.play('jumpscare', { gain: 1, bus: 'sting' });
+    if (ent) {
+      this.scare = { e: ent, t: 0, q0: this.camera.quaternion.clone(), cut: false };
+      this.entities.held = ent;
+      ent.visible = 1;
+      ent.obj.visible = true;
+      ent.obj.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (m.isMesh) (m.material as THREE.MeshStandardMaterial).opacity = 1;
+      });
+      ent.play(ent.actions.has('grab') ? 'grab' : ent.actions.has('lunge') ? 'lunge' : ent.actions.has('run') ? 'run' : 'walk', 0.05, true);
+      this.ui?.root.classList.add('scaring');
+      // timed in game time so the picture and the sound's hard cut stay together even at low frame rates
+      await this.until(() => !this.scare || this.scare.cut);
+      this.ui?.root.classList.remove('scaring');
+      this.events.onDeath?.(by);
+      await this.until(() => !this.scare || this.scare.t >= SCARE_CUT + 1.5);
+    } else {
+      this.events.onDeath?.(by);
+      this.post.vhs.uniforms.uGlitch.value = 1;
+      this.fadeTarget = 1;
+      await new Promise((r) => setTimeout(r, 2600));
+    }
+    this.endScare();
     this.run++;
     this.sanity = 0.8;
-    this.ui?.toast('You wake up back at the base.');
-    await this.enterLevel(0);
+    this.ui?.toast(this.startLevel === 0 ? 'You wake up back at the base.' : `You wake up at the start of ${LEVELS[this.startLevel].name}.`);
+    await this.enterLevel(this.startLevel);
+  }
+
+  private until(cond: () => boolean) {
+    return new Promise<void>((res) => {
+      const tick = () => (cond() ? res() : setTimeout(tick, 30));
+      tick();
+    });
+  }
+
+  /** test hook: freeze the jumpscare timeline so frames can be inspected */
+  debugHoldScare = false;
+
+  /** The catch: snap to face it, it lunges into your face, impact flash + shake, then a hard cut to black. */
+  private updateScare(dt: number) {
+    const s = this.scare!;
+    if (!this.debugHoldScare) s.t += dt;
+    const cam = this.camera;
+    const e = s.e;
+    const u = this.post.vhs.uniforms;
+    const calm = settings.reduceFlashes;
+    if (s.t >= SCARE_CUT) {
+      if (!s.cut) {
+        s.cut = true;
+        this.fade = this.fadeTarget = 1;
+        this.post.composite.uniforms.uFade.value = 1;
+        this.audio.hush(0.02);
+        this.scareLight.intensity = 0;
+        e.obj.visible = false;
+      }
+      u.uShock.value = 0;
+      u.uGlitch.value = 0;
+      return;
+    }
+    // horizontal direction to where it caught us (or straight ahead if it's round a corner)
+    const eye = cam.position.clone();
+    const dir = new THREE.Vector3(e.pos.x - eye.x, 0, e.pos.z - eye.z);
+    const seen = dir.lengthSq() > 0.01 && dir.lengthSq() < 16 && this.collider.los(eye.x, eye.z, e.pos.x, e.pos.z);
+    if (!seen) dir.set(0, 0, -1).applyQuaternion(s.q0).setY(0);
+    dir.normalize();
+    const DIST: Record<string, number> = { crawler: 0.5, dweller: 0.55, watcher: 0.7, smiler: 0.5, mimic: 0.45 };
+    const rush = 1 - Math.min(1, s.t / 0.16);
+    const dist = (DIST[e.kind] ?? 0.5) + 1.1 * rush * rush;
+    // quadrupeds rear up at you so you get the face, not the back
+    const rear = e.kind === 'crawler' || e.kind === 'dweller' ? -1.15 * Math.min(1, s.t / 0.2) - 0.25 : 0;
+    e.obj.position.set(eye.x + dir.x * dist, 0, eye.z + dir.z * dist);
+    e.obj.rotation.set(rear, Math.atan2(-dir.x, -dir.z), 0, 'YXZ');
+    if (e.kind === 'smiler') e.obj.position.y = eye.y - 0.1;
+    e.obj.updateMatrixWorld(true);
+    const headBone = e.obj.getObjectByName('head');
+    const head = headBone ? headBone.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 0.08, 0)) : e.obj.position.clone();
+    if (headBone) {
+      // move the whole body so its face sits `dist` in front of our eyes; tall ones keep their height
+      const want = new THREE.Vector3(eye.x + dir.x * dist, e.kind === 'watcher' ? head.y : eye.y - 0.03, eye.z + dir.z * dist);
+      const off = want.clone().sub(head);
+      e.obj.position.add(off);
+      head.copy(want);
+    }
+    // camera snaps onto its face (120 ms), then gets shaken
+    const m = new THREE.Matrix4().lookAt(eye, head, new THREE.Vector3(0, 1, 0));
+    const qt = new THREE.Quaternion().setFromRotationMatrix(m);
+    const k = Math.min(1, s.t / 0.12);
+    cam.quaternion.copy(s.q0).slerp(qt, 1 - (1 - k) ** 3);
+    const shake = (calm ? 0.35 : 1) * (0.25 + 0.75 * Math.max(0, 1 - s.t / SCARE_CUT));
+    const j = () => (Math.random() - 0.5) * 2;
+    cam.position.add(new THREE.Vector3(j(), j(), j()).multiplyScalar(0.03 * shake));
+    cam.quaternion.multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(j() * 0.03 * shake, j() * 0.03 * shake, j() * 0.05 * shake)));
+    cam.fov = settings.fov - 14 * Math.min(1, s.t / 0.08);
+    cam.updateProjectionMatrix();
+    // light its face from just in front of us, flickering
+    this.scareLight.position.copy(eye).addScaledVector(dir, 0.25).add(new THREE.Vector3(0, 0.25, 0));
+    this.scareLight.intensity = (calm ? 3 : 4) + Math.random() * (calm ? 1 : 5);
+    u.uShock.value = calm ? 0 : s.t < 0.07 ? 1 : Math.max(0, 0.35 - s.t) * 0.6;
+    u.uGlitch.value = 0.35 + 0.65 * Math.max(0, 1 - s.t / 0.5);
+    this.fadeTarget = 0;
+  }
+
+  private endScare() {
+    if (this.scare) this.scare.e.obj.visible = true;
+    this.scare = null;
+    this.entities.held = null;
+    this.scareLight.intensity = 0;
+    this.post.vhs.uniforms.uShock.value = 0;
   }
 }
