@@ -3,7 +3,7 @@ import * as THREE from 'three';
 // lockers, bulletin board, settings, pause, death/ending.
 
 import './ui.css';
-import { settings, saveSettings, profile, saveProfile, spend, onCoins } from '../core/Settings';
+import { settings, saveSettings, profile, saveProfile, spend, onCoins, DEFAULT_KEYS, type KeyAction } from '../core/Settings';
 import type { Game } from '../Game';
 import { detectRegion, REGION_NAMES, type Region } from '../net/Net';
 import { lobby, type GameMode, type Listing } from '../net/Lobby';
@@ -51,6 +51,11 @@ const SHOP: ShopItem[] = [
 ];
 
 const ITEM_NAMES: Record<string, string> = { almond: 'Almond Water', battery: 'Battery Pack' };
+
+const KEY_NAMES: Record<KeyAction, string> = { forward: 'Forward', back: 'Back', left: 'Left', right: 'Right', sprint: 'Sprint', crouch: 'Crouch', jump: 'Jump', flashlight: 'Flashlight', interact: 'Interact / sit', drink: 'Drink Almond Water', battery: 'Swap battery' };
+function keyLabel(code: string) {
+  return code.replace(/^Key/, '').replace(/^Digit/, '').replace('ShiftLeft', 'Shift').replace('ControlLeft', 'Ctrl').replace('Space', 'Space');
+}
 
 export class UI {
   root: HTMLElement;
@@ -251,8 +256,17 @@ export class UI {
   }
 
   private wireMode(w: HTMLElement, prefix = ''): () => { mode: GameMode; level: number } {
-    let mode: GameMode = 'escape';
-    let level = 0;
+    let mode: GameMode = settings.lastMode;
+    let level = settings.lastLevel;
+    const remember = () => {
+      settings.lastMode = mode;
+      settings.lastLevel = level;
+      saveSettings();
+    };
+    setTimeout(() => {
+      w.querySelector<HTMLButtonElement>(`.${prefix}mode button[data-m="${mode}"]`)?.click();
+      w.querySelector<HTMLButtonElement>(`.${prefix}lvl button[data-l="${level}"]`)?.click();
+    });
     w.querySelectorAll<HTMLButtonElement>(`.${prefix}mode button`).forEach((b) => {
       b.onclick = () => {
         mode = b.dataset.m as GameMode;
@@ -266,7 +280,10 @@ export class UI {
         w.querySelectorAll(`.${prefix}lvl button`).forEach((x) => x.classList.toggle('on', x === b));
       };
     });
-    return () => ({ mode, level: mode === 'endless' ? level : 0 });
+    return () => {
+      remember();
+      return { mode, level: mode === 'endless' ? level : 0 };
+    };
   }
 
   pickMode(title: string, go: (mode: GameMode, level: number) => void) {
@@ -393,14 +410,17 @@ export class UI {
   openHow() {
     this.openModal(`<h2>HOW TO PLAY</h2><div class="sub">If you're not careful and you noclip out of reality in the wrong areas, you'll end up in the Backrooms.</div>
       <div class="list">
-        <div class="item"><span><span class="kbd">WASD</span>Move</span><span><span class="kbd">SHIFT</span>Sprint (loud)</span></div>
-        <div class="item"><span><span class="kbd">C</span>Crouch (quiet)</span><span><span class="kbd">SPACE</span>Jump</span></div>
-        <div class="item"><span><span class="kbd">F</span>Flashlight</span><span><span class="kbd">E</span>Interact</span></div>
-        <div class="item"><span><span class="kbd">Q</span>Drink Almond Water</span><span><span class="kbd">R</span>Swap battery</span></div>
+        ${(() => {
+          const k = (a: KeyAction) => `<span class="kbd">${keyLabel(settings.keys[a]).toUpperCase()}</span>`;
+          return `<div class="item"><span>${k('forward')}${k('left')}${k('back')}${k('right')}Move</span><span>${k('sprint')}Sprint (loud)</span></div>
+        <div class="item"><span>${k('crouch')}Crouch (quiet)</span><span>${k('jump')}Jump</span></div>
+        <div class="item"><span>${k('flashlight')}Flashlight</span><span>${k('interact')}Interact / sit</span></div>
+        <div class="item"><span>${k('drink')}Drink Almond Water</span><span>${k('battery')}Swap battery</span></div>`;
+        })()}
         <div class="item"><span><span class="kbd">T</span>Chat (online)</span><span><span class="kbd">V</span>Push-to-talk (online)</span></div>
         <div class="item"><span><span class="kbd">TAB</span>Players</span><span><span class="kbd">ESC</span>Pause</span></div>
       </div>
-      <p class="sub" style="margin-top:16px">You start at the <b>Base</b>, a safe zone with a supply kiosk, lockers and a bulletin board. Leave it to explore. Follow the scrawled arrows to find the exit of each level. Level 0 → Level 1 → Level 2 → ???</p>
+      <p class="sub" style="margin-top:16px">You start at the <b>Base</b>, a safe zone with a supply kiosk, lockers and a bulletin board. Leave it to explore. Follow the scrawled arrows to find the way out of each level. Keys can be changed in Settings → Controls.</p>
       <p class="sub">Entities: some hunt by <b>sound</b> (walk or crouch), one only moves when <b>nobody is looking</b>, and some things in the dark hate <b>light</b>. Sanity drains in darkness. Almond Water helps.</p>
       <p class="sub">You earn Backrooms Coins by exploring, surviving, finding Almond Water and escaping. Spend them at the kiosk or on bulletin notes. There is no way to buy coins with money.</p>`);
   }
@@ -429,6 +449,10 @@ export class UI {
         ${this.slider('sensitivity', 'Mouse sensitivity', 0.1, 5, 0.05)}
         ${this.check('invertY', 'Invert Y axis')}
         ${this.check('rawInput', 'Raw mouse input (ignore OS acceleration)')}
+        ${this.check('crouchToggle', 'Toggle crouch (press once instead of holding)')}
+        ${this.check('sprintToggle', 'Toggle sprint (press once instead of holding)')}
+        <div class="field"><label>Key bindings: click a key, then press the new one</label><div class="list keys">${(Object.keys(KEY_NAMES) as KeyAction[]).map((a) => `<div class="item"><span>${KEY_NAMES[a]}</span><button class="btn bind" data-a="${a}">${keyLabel(settings.keys[a])}</button></div>`).join('')}</div>
+        <button class="btn resetkeys" style="margin-top:8px">RESET KEYS</button></div>
         <p class="sub">Gamepads are supported (left stick move, right stick look, A interact, Y flashlight, LB sprint, B crouch).</p>
       </div>
       <div data-p="social" class="hidden">
@@ -450,6 +474,29 @@ export class UI {
         this.actions.applySettings();
       };
     });
+    w.querySelectorAll<HTMLButtonElement>('.bind').forEach((b) => {
+      b.onclick = () => {
+        b.textContent = 'PRESS A KEY…';
+        const grab = (e: KeyboardEvent) => {
+          e.preventDefault();
+          e.stopPropagation();
+          removeEventListener('keydown', grab, true);
+          if (e.code !== 'Escape') {
+            settings.keys[b.dataset.a as KeyAction] = e.code;
+            saveSettings();
+          }
+          b.textContent = keyLabel(settings.keys[b.dataset.a as KeyAction]);
+        };
+        addEventListener('keydown', grab, true);
+      };
+    });
+    const rk = w.querySelector('.resetkeys') as HTMLButtonElement | null;
+    if (rk)
+      rk.onclick = () => {
+        settings.keys = { ...DEFAULT_KEYS };
+        saveSettings();
+        this.openSettings();
+      };
     w.querySelectorAll<HTMLInputElement>('input[type=checkbox]').forEach((c) => {
       c.onchange = () => {
         (settings as unknown as Record<string, boolean>)[c.name] = c.checked;
@@ -485,7 +532,7 @@ export class UI {
     const w = this.openModal(`<h2>PAUSED</h2><div class="sub">${LEVELS[this.game.level].name} — ${LEVELS[this.game.level].subtitle}${this.online ? ` · ${esc(net?.label ?? '')}` : ''}</div>
       ${this.onlineLink ? `<div class="field"><label>Invite link</label><div class="linkbox"><input type="text" readonly value="${esc(this.onlineLink)}"><button class="btn copy">COPY</button></div></div>` : ''}
       ${this.online ? `<div class="field"><label>Players (${players.length + 1}/8)</label><div class="list players"><div class="item"><span>${esc(settings.name)} (you)</span><span class="ping">L${this.game.level}</span></div>${players.map((p) => `<div class="item"><span>${esc(p.name)}${net?.hostPeer === p.id ? ' (host)' : ''}</span><span class="row" style="gap:10px"><span class="ping">L${p.level} · ${Math.round(p.ping)}ms</span>${net?.isHost ? `<button class="btn kick" data-id="${esc(p.id)}">KICK</button>` : ''}</span></div>`).join('')}</div></div>` : ''}
-      <div class="row" style="margin-top:10px"><button class="btn primary resume">RESUME</button><button class="btn settings">SETTINGS</button><button class="btn how">CONTROLS</button><button class="btn leave">LEAVE TO MENU</button></div>`);
+      <div class="pause-actions"><button class="btn primary resume">RESUME</button><button class="btn settings">SETTINGS</button><button class="btn how">CONTROLS</button>${!this.online && this.game.level !== this.game.startLevel ? '<button class="btn base">RETURN TO START</button>' : ''}<button class="btn leave">LEAVE TO MENU</button></div>`);
     $('.resume', w).onclick = () => this.closeModal(true);
     w.querySelectorAll<HTMLButtonElement>('.kick').forEach((b) => {
       b.onclick = () => {
@@ -496,6 +543,12 @@ export class UI {
     $('.settings', w).onclick = () => this.openSettings();
     $('.how', w).onclick = () => this.openHow();
     $('.leave', w).onclick = () => this.actions.leave();
+    const base = w.querySelector('.base') as HTMLButtonElement | null;
+    if (base)
+      base.onclick = () => {
+        this.closeModal(true);
+        void this.game.enterLevel(this.game.startLevel);
+      };
     const c = w.querySelector('.copy') as HTMLButtonElement | null;
     if (c)
       c.onclick = () => {
@@ -743,10 +796,10 @@ export class UI {
       this.openChat();
     } else if (e.code === 'KeyV' && !e.repeat && this.online) {
       if (settings.micMode === 'ptt') void this.game.net?.enableMic().then(() => this.game.net?.setTalking(true));
-    } else if (e.code === 'KeyQ') {
+    } else if (e.code === settings.keys.drink) {
       if (this.game.drinkAlmond()) this.toast('You drink the Almond Water. The walls stop breathing.');
       else this.toast('No Almond Water. Buy some at the base kiosk.');
-    } else if (e.code === 'KeyR') {
+    } else if (e.code === settings.keys.battery) {
       if ((profile.inventory.battery ?? 0) > 0) {
         profile.inventory.battery--;
         saveProfile();

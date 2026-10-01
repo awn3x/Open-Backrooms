@@ -106,7 +106,7 @@ void main() {
 
 const VHS = /* glsl */ `
 uniform sampler2D tSrc; uniform vec2 uRes; uniform float uTime; uniform float uAmt; uniform float uGrain;
-uniform float uGlitch; uniform float uVignette; uniform float uHaze; uniform float uSharpen; uniform float uFxaa; uniform float uShock;
+uniform float uGlitch; uniform float uVignette; uniform float uHaze; uniform float uSharpen; uniform float uFxaa; uniform float uShock; uniform float uLens;
 varying vec2 vUv;
 float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
 float luma(vec3 c) { return sqrt(dot(c, vec3(0.299, 0.587, 0.114))); }
@@ -130,8 +130,10 @@ vec3 fxaa(vec2 uv, vec2 px) {
   return (lB < lMin || lB > lMax) ? a : b;
 }
 void main() {
-  vec2 uv = vUv;
-  vec2 cc = uv - 0.5;
+  // real-lens character: slight barrel distortion (wide-angle phone/camcorder lens), scaled so edges stay filled
+  vec2 cc = vUv - 0.5;
+  float r2 = dot(cc * vec2(uRes.x / uRes.y, 1.0), cc * vec2(uRes.x / uRes.y, 1.0));
+  vec2 uv = 0.5 + cc * (1.0 + uLens * r2) / (1.0 + uLens * 0.32);
   // only a scare/death glitch displaces the image; normal play is clean
   float jitter = (hash(vec2(floor(uv.y * 240.0), floor(uTime * 30.0))) - 0.5);
   uv.x += jitter * 0.02 * uGlitch;
@@ -150,8 +152,9 @@ void main() {
   vec3 wgt = -amp * mix(0.125, 0.2, uSharpen);
   col = clamp((col + (n + s2 + e + w) * wgt) / (1.0 + 4.0 * wgt), 0.0, 1.0);
   // very faint tape character: slight chroma offset toward the edges
-  float ca = (0.0006 + 0.004 * uGlitch) * uAmt + 0.03 * uShock;
-  float cm = clamp(0.5 * uAmt + uShock, 0.0, 1.0);
+  // lateral chromatic aberration grows toward the frame edges, as on real glass
+  float ca = (0.0006 + 0.004 * uGlitch) * uAmt + 0.03 * uShock + uLens * 0.012 * r2;
+  float cm = clamp(0.5 * uAmt + uShock + uLens * 4.0, 0.0, 1.0);
   col.r = mix(col.r, texture2D(tSrc, uv + cc * ca).r, cm);
   col.b = mix(col.b, texture2D(tSrc, uv - cc * ca).b, cm);
   // fine film grain, strongest in shadows
@@ -247,6 +250,7 @@ export class Post {
     uGrain: { value: 1 },
     uGlitch: { value: 0 },
     uShock: { value: 0 },
+    uLens: { value: 0.06 },
     uVignette: { value: 0.25 },
     uSharpen: { value: 0.5 },
     uFxaa: { value: 1 },
