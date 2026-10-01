@@ -234,3 +234,9 @@ details.overflow summary:hover .lbl { color: #d9d2bd; }
 .ping-mark.item { color: #9fd8ff; }
 .ping-mark.exit { color: #9dff9d; }
 #ui.scaring .ping-mark { visibility: hidden; }
+
+/* invite links: the site address is fixed, players type the room name */
+.urlbox { display: flex; align-items: stretch; border: 1px solid rgba(233,226,198,0.14); background: rgba(0,0,0,0.35); transition: border-color 0.15s; }
+.urlbox:focus-within { border-color: rgba(233,226,198,0.55); }
+.urlbox span { display: flex; align-items: center; padding: 0 0 0 13px; font: 14px var(--sans); color: #7d7765; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 70%; }
+.field .urlbox input[type=text] { flex: 1; min-width: 80px; border: none; background: none; padding-left: 2px; }

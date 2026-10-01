@@ -358,7 +358,12 @@ export class Game {
     const tgt = this.camera.position.clone().addScaledVector(fwd, 6);
     this.lights.flashTarget.position.lerp(tgt, damp(14, dt));
     const flick = p.battery < 0.15 ? (Math.random() < 0.1 ? 0.2 : 1) : 1;
-    fl.intensity = p.flashlight ? 38 * flick * (0.4 + 0.6 * Math.min(1, p.battery * 3)) : 0;
+    // A torch held a metre from a ceiling tile would blow it out to a flat white disc; ease the
+    // beam off as whatever it's pointed at gets close, the way your eyes and the torch's own
+    // falloff would, so surface detail survives up close and in blackouts.
+    const hitD = this.beamDistance(fwd);
+    this.beamScale += (Math.min(1, Math.max(0.06, Math.pow(hitD / 3.2, 1.7))) - this.beamScale) * damp(10, dt);
+    fl.intensity = p.flashlight ? 38 * this.beamScale * flick * (0.4 + 0.6 * Math.min(1, p.battery * 3)) : 0;
     const pro = profile.flashlight === 'torch_pro';
     if (pro) fl.intensity *= 1.5;
     if (p.flashlight) p.battery = Math.max(0, p.battery - dt / (pro ? 840 : 420));
@@ -571,6 +576,29 @@ export class Game {
       }
     }
     P.z = e.r;
+  }
+
+  private beamScale = 1;
+  /** rough distance from the camera to the first surface along `dir`: ceiling, floor or wall */
+  private beamDistance(dir: THREE.Vector3): number {
+    const c = this.camera.position;
+    const H = LEVELS[this.level].height;
+    let d = 12;
+    if (dir.y > 0.02) d = Math.min(d, (H - c.y) / dir.y);
+    if (dir.y < -0.02) d = Math.min(d, c.y / -dir.y);
+    const hl = Math.hypot(dir.x, dir.z);
+    if (hl > 0.05) {
+      const ux = dir.x / hl;
+      const uz = dir.z / hl;
+      for (const r of [0.4, 0.8, 1.3, 2, 3, 4.5, 6.5]) {
+        if (r / hl > d) break;
+        if (!this.collider.los(c.x, c.z, c.x + ux * r, c.z + uz * r)) {
+          d = Math.min(d, r / hl);
+          break;
+        }
+      }
+    }
+    return d;
   }
 
   // ------------------------------------------------------------------ interaction

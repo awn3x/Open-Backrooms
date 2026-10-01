@@ -6,7 +6,8 @@ import './ui.css';
 import { settings, saveSettings, profile, saveProfile, spend, onCoins } from '../core/Settings';
 import type { Game } from '../Game';
 import { detectRegion, REGION_NAMES, type Region } from '../net/Net';
-import { lobby, type GameMode, type Listing } from '../net/Lobby';
+import { lobby, siteUrl, slugName, type GameMode, type Listing } from '../net/Lobby';
+import { nostr } from '../net/Nostr';
 import { board, TIERS, nextReset, BOARD_SLOTS, type Note } from '../net/Board';
 import { censor, containsProfanity, sanitize } from './profanity';
 import { LEVELS } from '../levels/levels';
@@ -294,14 +295,15 @@ export class UI {
         <button class="btn primary go-public">QUICK JOIN</button>
       </div>
       <div data-p="create" class="hidden">
-        <div class="field"><label>Room name</label><input type="text" class="rname" maxlength="32" placeholder="e.g. level-zero-crew"></div>
+        <div class="field"><label>Room name <span class="count avail"></span></label><div class="urlbox"><span>${esc(siteUrl())}?room=</span><input type="text" class="rname" maxlength="32" placeholder="level-zero-crew" spellcheck="false"></div></div>
         <div class="field"><label>Password (optional: players will be asked for it)</label><input type="password" class="rpass" maxlength="40"></div>
         ${this.modeFields('h')}
-        <p class="sub">Your room is listed in Browse Games for everyone. As host you can remove players from the pause menu.</p>
+        <p class="sub">That's your invite link. Room names are unique: if someone is already hosting one with that name, pick another. Your room is listed in Browse Games, and as host you can remove players from the pause menu.</p>
         <button class="btn primary go-create">HOST &amp; ENTER</button>
       </div>
       <div data-p="join" class="hidden">
-        <div class="field"><label>Invite link</label><input type="text" class="jname" maxlength="300" placeholder="https://…/?room=…"></div>
+        <div class="field"><label>Invite link</label><div class="urlbox"><span>${esc(siteUrl())}?room=</span><input type="text" class="jname" maxlength="300" placeholder="room-name" spellcheck="false"></div></div>
+        <p class="sub">Type the room name, or paste the whole link a friend sent you.</p>
         <div class="field"><label>Password (if any)</label><input type="password" class="jpass" maxlength="40"></div>
         <button class="btn primary go-join">JOIN</button>
       </div>
@@ -364,7 +366,28 @@ export class UI {
     $('.pwgo', w).onclick = pwGo;
     $('.pwin', w).addEventListener('keydown', (e) => (e as KeyboardEvent).key === 'Enter' && pwGo());
     // --- other tabs
-    const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9-_]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
+    const slug = slugName;
+    const rname = $('.rname', w) as HTMLInputElement;
+    const avail = $('.avail', w);
+    rname.oninput = () => {
+      const n = slug(rname.value);
+      const mine = lobby.byName(n).every((l) => l.host === nostr.pubkey);
+      avail.textContent = !n ? '' : mine ? `${n} · looks free` : `${n} · taken`;
+      avail.style.color = !n ? '' : mine ? 'var(--ok)' : 'var(--danger)';
+    };
+    // a pasted full link goes in whole; keep just the room part
+    const jname = $('.jname', w) as HTMLInputElement;
+    jname.addEventListener('paste', () =>
+      setTimeout(() => {
+        try {
+          const u = new URL(jname.value.trim());
+          const r = u.searchParams.get('room');
+          if (r) jname.value = r + (u.hash ? u.hash : '');
+        } catch {
+          /* not a URL */
+        }
+      }),
+    );
     const getMode = this.wireMode(w, 'h');
     $('.go-public', w).onclick = () => this.actions.publicWorld(this.region);
     $('.go-create', w).onclick = () => {
@@ -375,10 +398,10 @@ export class UI {
       this.actions.createRoom(n, ($('.rpass', w) as HTMLInputElement).value, mode, level);
     };
     $('.go-join', w).onclick = () => {
-      let v = ($('.jname', w) as HTMLInputElement).value.trim();
+      let v = jname.value.trim();
       let pass = ($('.jpass', w) as HTMLInputElement).value;
       try {
-        const u = new URL(v);
+        const u = new URL(v.includes('://') ? v : siteUrl() + '?room=' + v);
         v = u.searchParams.get('room') ?? v;
         const k = new URLSearchParams(u.hash.slice(1)).get('k');
         if (k && !pass) pass = k;

@@ -63,13 +63,31 @@ function validate(e: NEvent): Listing | null {
   };
 }
 
+/** The address this copy of the game is served from (e.g. https://awn3x.github.io/Open-Backrooms/). */
+export function siteUrl() {
+  return location.origin + location.pathname.replace(/index\.html$/, '');
+}
+
+/** Room names as they appear in invite links: lowercase, a-z 0-9 - _ */
+export const slugName = (s: string) =>
+  s
+    .toLowerCase()
+    .replace(/[^a-z0-9-_]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32);
+
+/** hosts re-announce every 15 s, so after this long listening the room list is complete */
+const WARM_MS = 16000;
+
 export class Lobby {
   listings = new Map<string, Listing>();
   onChange?: () => void;
   private unsub: (() => void) | null = null;
+  private since = 0;
 
   browse() {
     if (this.unsub) return;
+    this.since = Date.now();
     this.unsub = nostr.subscribe({ kinds: [LOBBY_KIND], '#t': [TAG], since: Math.floor(Date.now() / 1000) - 60 }, (e) => {
       const l = validate(e);
       if (!l) return;
@@ -81,6 +99,38 @@ export class Lobby {
   stop() {
     this.unsub?.();
     this.unsub = null;
+  }
+
+  /** Live hosted rooms with this name, busiest first (names are unique, so normally 0 or 1). */
+  byName(name: string): Listing[] {
+    return this.list().filter((l) => parseRoom(l.id)?.name === name);
+  }
+
+  /** Resolves once the list has heard a full announce cycle (immediately if it already has). */
+  async warm(onWait?: (secondsLeft: number) => void) {
+    this.browse();
+    while (Date.now() - this.since < WARM_MS) {
+      onWait?.(Math.ceil((WARM_MS - (Date.now() - this.since)) / 1000));
+      await new Promise((r) => setTimeout(r, 500));
+    }
+  }
+
+  /** Is `name` hosted by someone other than `pubkey`? Waits for a full announce cycle first. */
+  async taken(name: string, pubkey: string, onWait?: (s: number) => void) {
+    await this.warm(onWait);
+    return this.byName(name).some((l) => l.host !== pubkey);
+  }
+
+  /** Find the room id for an invite name, listening up to a full announce cycle for it. */
+  async resolve(name: string, onWait?: (s: number) => void): Promise<string | null> {
+    this.browse();
+    for (;;) {
+      const hit = this.byName(name)[0];
+      if (hit) return hit.id;
+      if (Date.now() - this.since >= WARM_MS) return null;
+      onWait?.(Math.ceil((WARM_MS - (Date.now() - this.since)) / 1000));
+      await new Promise((r) => setTimeout(r, 500));
+    }
   }
 
   /** live listings, freshest-first */
