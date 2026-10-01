@@ -299,7 +299,7 @@ export class Net {
   }
 
   targets(): Target[] {
-    return [...this.peers.values()].filter((p) => p.level === this.game.level).map((p) => ({ id: p.id, x: p.pos.x, z: p.pos.z, alive: p.alive, lit: p.flash }));
+    return [...this.peers.values()].filter((p) => p.level === this.game.level).map((p) => ({ id: p.id, x: p.pos.x, z: p.pos.z, alive: p.alive, lit: p.flash, fx: -Math.sin(p.yaw), fz: -Math.cos(p.yaw) }));
   }
 
   onLevelChanged(_level: number) {

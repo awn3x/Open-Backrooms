@@ -461,7 +461,7 @@ export class UI {
     ($('.q', w) as HTMLSelectElement).onchange = (e) => {
       settings.quality = (e.target as HTMLSelectElement).value as typeof settings.quality;
       saveSettings();
-      this.toast('Quality applies on the next level load.');
+      void this.game.setQuality();
     };
     ($('.mic', w) as HTMLSelectElement).onchange = (e) => {
       settings.micMode = (e.target as HTMLSelectElement).value as typeof settings.micMode;
@@ -635,7 +635,7 @@ export class UI {
       this.promptEl.classList.add('hidden');
       return;
     }
-    const verb = kind === 'pickup' ? 'Take' : kind === 'exit' ? 'Enter' : kind === 'couch' ? 'Sit' : 'Use';
+    const verb = kind === 'pickup' ? 'Take' : kind === 'exit' ? 'Enter' : kind === 'couch' || kind === 'armchair' ? 'Sit on' : 'Use';
     this.promptEl.innerHTML = `<i>E</i> ${verb} ${esc(label)}`;
     this.promptEl.classList.remove('hidden');
   }
@@ -680,11 +680,39 @@ export class UI {
     this.titleT = 4;
   }
 
+  private deathEl: HTMLElement | null = null;
+
   showDeath(by: string) {
-    const words: Record<string, string> = { crawler: 'IT HEARD YOU', watcher: 'YOU LOOKED AWAY', smiler: 'IT SMILED BACK', dweller: 'SOMETHING IN THE PIPES', mimic: 'THAT WASN\'T THEM' };
-    const d = h(`<div class="death osd">${words[by] ?? 'SIGNAL LOST'}</div>`);
+    const g = this.game;
+    const who: Record<string, [string, string]> = {
+      hound: ['HOUND', 'It heard you before you ever saw it.'],
+      howler: ['THE HOWLER', 'You looked away.'],
+      smiler: ['SMILER', 'You turned your light on it. It smiled back.'],
+      skinstealer: ['SKIN-STEALER', "That wasn't who you thought it was."],
+    };
+    const [name, line] = who[by] ?? ['UNKNOWN', 'Something found you in the dark.'];
+    const t = Math.floor(g.lifeTime);
+    const time = `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+    const lv = LEVELS[g.level];
+    this.deathEl?.remove();
+    const d = h(`<div class="death-screen">
+      <div class="ds-inner">
+        <div class="ds-kicker">You were caught by</div>
+        <div class="ds-name">${name}</div>
+        <div class="ds-line">${esc(line)}</div>
+        <div class="ds-stats"><span>${esc(lv.name)} — ${esc(lv.subtitle)}</span><span>Survived ${time}</span><span>Walked ${Math.round(g.lifeDist)} m</span></div>
+        <div class="ds-wake">${g.startLevel === 0 ? 'Waking up at the base' : `Waking up at the start of ${esc(lv.name)}`}<i>.</i><i>.</i><i>.</i></div>
+      </div></div>`);
     this.root.append(d);
-    setTimeout(() => d.remove(), 2600);
+    this.deathEl = d;
+  }
+
+  hideDeath() {
+    const d = this.deathEl;
+    if (!d) return;
+    this.deathEl = null;
+    d.classList.add('out');
+    setTimeout(() => d.remove(), 1400);
   }
 
   showEnding() {

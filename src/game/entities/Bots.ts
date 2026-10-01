@@ -101,7 +101,7 @@ export class Bots {
   }
 
   targets(): Target[] {
-    return this.list.map((b) => ({ id: 'bot:' + b.name, x: b.pos.x, z: b.pos.z, alive: b.alive, lit: b.flash, bot: true }));
+    return this.list.map((b) => ({ id: 'bot:' + b.name, x: b.pos.x, z: b.pos.z, alive: b.alive, lit: b.flash, bot: true, fx: Math.sin(b.yaw), fz: Math.cos(b.yaw) }));
   }
 
   // ------------------------------------------------------------------ helpers
@@ -170,7 +170,10 @@ export class Bots {
   }
 
   private ping(pos: THREE.Vector3, kind: 'threat' | 'item' | 'exit', label: string) {
-    this.game.ui?.ping(pos, kind, label);
+    // no on-screen callouts (by request): bots communicate only through what they do
+    void pos;
+    void kind;
+    void label;
   }
 
   // ------------------------------------------------------------------ per frame
@@ -196,7 +199,6 @@ export class Bots {
           b.alive = true;
           b.pos.copy(this.trailPoint(6));
           b.avatar.root.visible = true;
-          g.ui?.toast(`${b.name} found their way back to you.`);
         }
         continue;
       }
@@ -207,29 +209,27 @@ export class Bots {
       let td = Infinity;
       for (const e of g.entities.list) {
         const d = Math.hypot(e.pos.x - b.pos.x, e.pos.z - b.pos.z);
-        if (d < 16 && e.visible > 0.4 && d < td && g.collider.los(b.pos.x, b.pos.z, e.pos.x, e.pos.z)) {
+        if (e.kind !== 'faceling' && d < 16 && e.visible > 0.4 && d < td && g.collider.los(b.pos.x, b.pos.z, e.pos.x, e.pos.z)) {
           threat = { pos: e.pos, kind: e.kind, id: e.id };
           td = d;
         }
-        if (d < 0.9 && (e.state === 'chase' || e.kind === 'watcher') && !inBase) {
+        if (d < 0.9 && (e.state === 'chase' || e.kind === 'howler') && !inBase) {
           b.alive = false;
           b.respawn = 25;
           b.avatar.root.visible = false;
           b.avatar.setFlashlight(false);
           g.audio.play('crawler_scream', { pos: b.pos, gain: 0.8, occlude: true });
-          g.ui?.toast(`${b.name} was taken.`);
         }
       }
       if (!b.alive) continue;
       if (threat && !b.threatSeen.has(threat.id)) {
         b.threatSeen.add(threat.id);
-        this.ping(threat.pos, 'threat', threat.kind === 'watcher' ? "Don't look away" : threat.kind === 'smiler' ? 'Lights off' : 'Run');
+        this.ping(threat.pos, 'threat', threat.kind === 'howler' ? "Don't look away" : threat.kind === 'smiler' ? 'Lights off' : 'Run');
         g.audio.play('breath_in', { pos: b.pos, gain: 0.35, rate: 1.1, occlude: true });
       }
       if (exitIt && !this.exitKnown && Math.hypot(exitIt.pos.x - b.pos.x, exitIt.pos.z - b.pos.z) < 18 && g.collider.los(b.pos.x, b.pos.z, exitIt.pos.x, exitIt.pos.z)) {
         this.exitKnown = true;
         this.ping(exitIt.pos.clone(), 'exit', 'Way out');
-        g.ui?.toast(`${b.name} spotted the way out.`);
       }
       // pick up Almond Water, point out what they can't carry
       for (const it of g.objects?.interactables ?? []) {
@@ -251,7 +251,7 @@ export class Bots {
       const needs = b.carry > 0 && (g.sanity < 0.5 || p.stamina < 0.2) && (profile.inventory.almond ?? 0) === 0;
       b.modeT -= dt;
       if (threat && !inBase) {
-        b.mode = threat.kind === 'watcher' ? 'watch' : threat.kind === 'smiler' ? 'avoid' : 'flee';
+        b.mode = threat.kind === 'howler' ? 'watch' : threat.kind === 'smiler' ? 'avoid' : 'flee';
         b.modeT = 3;
       } else if (needs) b.mode = 'give';
       else if (b.modeT <= 0 || b.mode === 'give') {
@@ -280,7 +280,6 @@ export class Bots {
             b.carry--;
             profile.inventory.almond = (profile.inventory.almond ?? 0) + 1;
             saveProfile();
-            g.ui?.toast(`${b.name} handed you Almond Water. (Q to drink)`);
             b.mode = 'follow';
           }
           break;

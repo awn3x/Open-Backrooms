@@ -68,6 +68,8 @@ export class Player {
   vy = 0;
   alive = true;
   frozen = false;
+  /** sitting on a couch / armchair: look around freely, no walking */
+  seated: { x: number; z: number } | null = null;
   onStep?: (e: StepEvent) => void;
   onBump?: (speed: number) => void;
 
@@ -114,7 +116,7 @@ export class Player {
     // --- intent
     let mx = 0;
     let mz = 0;
-    if (!this.frozen && this.alive) {
+    if (!this.frozen && this.alive && !this.seated) {
       if (inp.down('KeyW') || inp.down('ArrowUp')) mz -= 1;
       if (inp.down('KeyS') || inp.down('ArrowDown')) mz += 1;
       if (inp.down('KeyA') || inp.down('ArrowLeft')) mx -= 1;
@@ -224,7 +226,11 @@ export class Player {
     this.spring.step(dt);
     this.rotSpring.step(dt);
 
-    const eyeTarget = this.crouching ? 1.05 : 1.65;
+    const eyeTarget = this.seated ? 1.08 : this.crouching ? 1.05 : 1.65;
+    if (this.seated) {
+      this.pos.x += (this.seated.x - this.pos.x) * Math.min(1, dt * 6);
+      this.pos.z += (this.seated.z - this.pos.z) * Math.min(1, dt * 6);
+    }
     this.eye = lerp(this.eye, eyeTarget, damp(12, dt));
     const cam = this.camera;
     cam.position.set(this.pos.x, this.pos.y + this.eye + bobY + breathY + this.spring.x.y, this.pos.z);

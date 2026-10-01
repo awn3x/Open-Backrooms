@@ -124,6 +124,20 @@ export class ChunkManager {
     }
   }
 
+  /** Switch texture resolution in place (quality change) without reloading the level. */
+  async swapTier(tier: Tier) {
+    const old = this.mats;
+    await this.loadMaterials(tier);
+    for (const c of this.chunks.values())
+      c.group.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh) return;
+        const mat = m.name === 'small' ? this.mats.props : this.mats[m.name];
+        if (mat) m.material = mat;
+      });
+    for (const m of Object.values(old ?? {})) m.dispose();
+  }
+
   key(cx: number, cz: number) {
     return LayoutCache.key(cx, cz);
   }

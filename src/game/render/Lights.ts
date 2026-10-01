@@ -55,6 +55,15 @@ export class LightRig {
     this.flashlight = f;
   }
 
+  dispose(scene: THREE.Scene) {
+    for (const s of this.slots) {
+      scene.remove(s.light);
+      s.light.dispose();
+    }
+    scene.remove(this.flashlight, this.flashTarget);
+    this.flashlight.dispose();
+  }
+
   setLevel(emitY: number, color: THREE.Color) {
     this.emitY = emitY;
     for (const s of this.slots) s.light.color.copy(color);
