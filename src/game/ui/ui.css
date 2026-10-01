@@ -85,6 +85,15 @@ button { font: inherit; color: inherit; }
 .panel .sub { color: var(--dim); font-size: 14px; margin-bottom: 18px; }
 .panel .close { position: absolute; top: 14px; right: 16px; background: none; border: 1px solid var(--line); color: var(--dim); cursor: pointer; font: 11px var(--osd); letter-spacing: 0.1em; padding: 5px 10px; }
 .panel .close:hover { color: var(--ink); border-color: var(--ink); }
+/* pause menu */
+.panel:has(.pause) { width: min(420px, 92vw); padding: 30px 28px 26px; border-top: 2px solid var(--accent); }
+.pause h2 { text-align: center; font-size: 30px; letter-spacing: 0.3em; margin-bottom: 6px; }
+.pause > .sub { text-align: center; margin-bottom: 22px; }
+.pause .field { margin-bottom: 16px; }
+.pause-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.pause-actions .btn { width: 100%; padding: 13px 16px; font-size: 13px; letter-spacing: 0.2em; text-align: center; }
+.pause-actions .leave { margin-top: 10px; background: none; color: var(--dim); }
+.pause-actions .leave:hover:not(:disabled) { color: #ff8a7a; border-color: #ff8a7a; background: rgba(255,90,70,0.08); }
 .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 .btn { cursor: pointer; background: rgba(233,226,198,0.08); border: 1px solid var(--line); padding: 9px 16px; font: 600 12px var(--osd); letter-spacing: 0.12em; border-radius: 2px; color: var(--ink); transition: background 0.15s, border-color 0.15s; }
 .btn:hover:not(:disabled) { background: rgba(233,226,198,0.18); border-color: var(--ink); }

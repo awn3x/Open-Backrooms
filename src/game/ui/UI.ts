@@ -482,10 +482,10 @@ export class UI {
   openPause() {
     const net = this.game.net;
     const players = net ? [...net.peers.values()] : [];
-    const w = this.openModal(`<h2>PAUSED</h2><div class="sub">${LEVELS[this.game.level].name} — ${LEVELS[this.game.level].subtitle}${this.online ? ` · ${esc(net?.label ?? '')}` : ''}</div>
+    const w = this.openModal(`<div class="pause"><h2>PAUSED</h2><div class="sub">${LEVELS[this.game.level].name} — ${LEVELS[this.game.level].subtitle}${this.online ? ` · ${esc(net?.label ?? '')}` : ''}</div>
       ${this.onlineLink ? `<div class="field"><label>Invite link</label><div class="linkbox"><input type="text" readonly value="${esc(this.onlineLink)}"><button class="btn copy">COPY</button></div></div>` : ''}
       ${this.online ? `<div class="field"><label>Players (${players.length + 1}/8)</label><div class="list players"><div class="item"><span>${esc(settings.name)} (you)</span><span class="ping">L${this.game.level}</span></div>${players.map((p) => `<div class="item"><span>${esc(p.name)}${net?.hostPeer === p.id ? ' (host)' : ''}</span><span class="row" style="gap:10px"><span class="ping">L${p.level} · ${Math.round(p.ping)}ms</span>${net?.isHost ? `<button class="btn kick" data-id="${esc(p.id)}">KICK</button>` : ''}</span></div>`).join('')}</div></div>` : ''}
-      <div class="row" style="margin-top:10px"><button class="btn primary resume">RESUME</button><button class="btn settings">SETTINGS</button><button class="btn how">CONTROLS</button><button class="btn leave">LEAVE TO MENU</button></div>`);
+      <div class="pause-actions"><button class="btn primary resume">RESUME</button><button class="btn settings">SETTINGS</button><button class="btn how">CONTROLS</button><button class="btn leave">LEAVE TO MENU</button></div></div>`);
     $('.resume', w).onclick = () => this.closeModal(true);
     w.querySelectorAll<HTMLButtonElement>('.kick').forEach((b) => {
       b.onclick = () => {
