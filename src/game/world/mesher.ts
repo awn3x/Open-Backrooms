@@ -235,13 +235,13 @@ export function buildChunk(L: ChunkLayout, protos: Protos): ChunkMeshes {
     const side = [0.16, 0.16, 0.15, 1];
     const back = [0.025, 0.025, 0.025, 1];
     const m = [0.55, 0.6, 0, 0];
-    const face = (q: number[][], n: number[], col: number[]) => {
+    const face = (q: number[][], n: number[], col: number[], mm = m) => {
       // wind CCW as seen from the normal side
       const e1 = [q[1][0] - q[0][0], q[1][1] - q[0][1], q[1][2] - q[0][2]];
       const e2 = [q[2][0] - q[0][0], q[2][1] - q[0][1], q[2][2] - q[0][2]];
       const cr = [e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]];
       if (cr[0] * n[0] + cr[1] * n[1] + cr[2] * n[2] < 0) q.reverse();
-      props.quad(q, n, [[0, 0], [1, 0], [1, 1], [0, 1]], col, m);
+      props.quad(q, n, [[0, 0], [1, 0], [1, 1], [0, 1]], col, mm);
     };
     const ax = nx ? [0, 0, 1] : [1, 0, 0]; // direction of increasing a
     face([P(h0, y0), P(h1, y0), P(h1, y0, D), P(h0, y0, D)], [0, 1, 0], side); // floor of the duct
@@ -249,6 +249,41 @@ export function buildChunk(L: ChunkLayout, protos: Protos): ChunkMeshes {
     face([P(h0, y0), P(h0, y1), P(h0, y1, D), P(h0, y0, D)], ax, side);
     face([P(h1, y0), P(h1, y1), P(h1, y1, D), P(h1, y0, D)], ax.map((k) => -k), side);
     face([P(h0, y0, D), P(h1, y0, D), P(h1, y1, D), P(h0, y1, D)], [nx, 0, nz], back);
+    // grille: a painted frame proud of the wall, and open slats tipped toward a standing player's
+    // eye line (front edge up on low vents, down on high ones) so you can see into the dark duct
+    const paint = [0.74, 0.73, 0.68, 1];
+    const pm = [0.42, 0.35, 0, 0];
+    const F = 0.012; // frame width
+    const pr = -0.008; // proud of the wall
+    const ring = (b0: number, b1: number, c0: number, c1: number) => {
+      face([P(b0, c0, pr), P(b1, c0, pr), P(b1, c1, pr), P(b0, c1, pr)], [nx, 0, nz], paint, pm);
+    };
+    ring(h0 - F, h1 + F, y1, y1 + F);
+    ring(h0 - F, h1 + F, y0 - F, y0);
+    ring(h0 - F, h0, y0, y1);
+    ring(h1, h1 + F, y0, y1);
+    // frame edges, so it has thickness when seen at an angle
+    face([P(h0 - F, y1 + F, pr), P(h1 + F, y1 + F, pr), P(h1 + F, y1 + F, 0), P(h0 - F, y1 + F, 0)], [0, 1, 0], paint, pm);
+    face([P(h0 - F, y0 - F, pr), P(h1 + F, y0 - F, pr), P(h1 + F, y0 - F, 0), P(h0 - F, y0 - F, 0)], [0, -1, 0], paint, pm);
+    face([P(h0 - F, y0 - F, pr), P(h0 - F, y1 + F, pr), P(h0 - F, y1 + F, 0), P(h0 - F, y0 - F, 0)], ax.map((k) => -k), paint, pm);
+    face([P(h1 + F, y0 - F, pr), P(h1 + F, y1 + F, pr), P(h1 + F, y1 + F, 0), P(h1 + F, y0 - F, 0)], ax, paint, pm);
+    const SL = 6;
+    const tip = v.y < H / 2 ? 1 : -1;
+    const bd = 0.022; // blade depth
+    const rise = 0.011 * tip; // front edge offset from back edge
+    for (let k = 0; k < SL; k++) {
+      const yc = y0 + ((k + 0.5) / SL) * VENT_H;
+      const yb = yc - rise / 2; // back edge
+      const yf = yc + rise / 2; // front edge
+      const zb = bd * 0.7;
+      const zf = -bd * 0.3;
+      const ln = Math.hypot(bd, rise);
+      // normal of the blade's upper face: perpendicular to (depth, rise), pointing up
+      const up = [(-nx * rise) / ln, bd / ln, (-nz * rise) / ln];
+      if (up[1] < 0) up.forEach((_, i) => (up[i] = -up[i]));
+      face([P(h0, yf, zf), P(h1, yf, zf), P(h1, yb, zb), P(h0, yb, zb)], up, paint, pm);
+      face([P(h0, yf - 0.002, zf), P(h1, yf - 0.002, zf), P(h1, yb - 0.002, zb), P(h0, yb - 0.002, zb)], up.map((k) => -k), [0.5, 0.49, 0.46, 1], pm);
+    }
     return true;
   };
   for (let j = 0; j < N; j++)
@@ -341,7 +376,7 @@ export function buildChunk(L: ChunkLayout, protos: Protos): ChunkMeshes {
   const SMALL = new Set(['outlet_duplex', 'outlet_twoprong', 'outlet_gfci', 'outlet_broken', 'switch_plate', 'floor_box', 'vent_wall', 'pipe_gauge']);
   for (const p of L.props) {
     const parts = protos[p.kind];
-    if (!parts) continue;
+    if (!parts || p.kind === 'vent_wall') continue; // built with its wall opening above
     const dst = SMALL.has(p.kind) ? small : props;
     for (const part of parts) {
       const em = part.emissive > 0;
