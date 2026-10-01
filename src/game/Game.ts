@@ -77,6 +77,10 @@ export class Game {
   private eventT = 8;
   private sparkT = 1;
   private coinDist = 0;
+  private seatStand: { x: number; z: number } | null = null;
+  /** this life's stats, for the death screen */
+  lifeTime = 0;
+  lifeDist = 0;
   private surviveT = 0;
   private powerEvt: { t: number; dir: number; r: number } | null = null;
   private fade = 1;
@@ -122,6 +126,22 @@ export class Game {
     this.renderer.shadowMap.enabled = this.preset.shadows;
     this.resize();
     return q;
+  }
+
+  /** Apply a quality change right away: post chain, resolution, shadows, light count and texture tier. */
+  async setQuality() {
+    const oldTier = this.preset.tier;
+    this.applyQuality();
+    if (this.lights) {
+      this.lights.dispose(this.scene);
+      this.lights = new LightRig(this.scene, this.preset.lights, this.preset.shadows, this.preset.shadowSize);
+      const def = LEVELS[this.level];
+      const emitY = def.fixture === 'troffer' ? def.height - 0.08 : def.fixture === 'highbay' ? def.height - 1.3 : def.height - 0.2;
+      this.lights.setLevel(emitY, WU.uLightCol.value);
+      for (const h of this.hum) h?.stop(0.2);
+      this.hum = this.lights.slots.map(() => null);
+    }
+    if (this.world && oldTier !== this.preset.tier) await this.world.swapTier(this.preset.tier);
   }
 
   resize() {
@@ -301,6 +321,14 @@ export class Game {
       this.camera.rotation.set(0.02 + Math.sin(this.time * 0.31) * 0.02, -t * 1.6 + 2.2, Math.sin(this.time * 0.23) * 0.01, 'YXZ');
     } else if (!this.paused) {
       p.frozen = false;
+      if (p.seated) {
+        // any movement key gets you back up; resting in the base slowly restores sanity
+        if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space'].some((k) => inp.down(k)) || inp.hit('KeyE')) {
+          p.seated = null;
+          if (this.seatStand) p.teleport(this.seatStand.x, this.seatStand.z, p.yaw);
+          this.audio.play('cloth', { gain: 0.4, rate: 1.1 });
+        } else this.sanity = Math.min(1, this.sanity + dt * 0.05);
+      }
       p.update(dt);
       // flashlight
       if (inp.hit('KeyF') || (inp.pad()?.flash && !this.lastPadFlash)) {
@@ -355,6 +383,8 @@ export class Game {
     // coins for surviving and exploring (never for real money)
     if (!safe && p.alive && !this.menuMode) {
       this.coinDist += p.speed * dt;
+      this.lifeDist += p.speed * dt;
+      this.lifeTime += dt;
       this.surviveT += dt;
       if (this.coinDist > 60) {
         this.coinDist = 0;
@@ -367,7 +397,7 @@ export class Game {
     }
 
     this.objects?.update(this.time);
-    const near = this.objects?.nearest(p.pos) ?? null;
+    const near = p.seated ? null : (this.objects?.nearest(p.pos) ?? null);
     if (near !== this.nearIt) {
       this.nearIt = near;
       this.ui?.prompt(near ? near.label : null, near?.kind);
@@ -515,7 +545,6 @@ export class Game {
         saveProfile();
         this.audio.play('bottle_open', { gain: 0.5 });
         earn(3, 'almond water');
-        this.ui?.toast('Almond Water +1');
         this.net?.sendPickup(it.data as number);
         break;
       }
@@ -528,9 +557,13 @@ export class Game {
         this.ui?.openPanel(it.kind);
         break;
       case 'couch':
-        this.sanity = Math.min(1, this.sanity + 0.3);
-        this.ui?.toast('You rest for a moment. The hum is almost comforting.');
+      case 'armchair': {
+        const d = it.data as { x: number; z: number; sx: number; sz: number };
+        this.seatStand = { x: d.sx, z: d.sz };
+        this.player.seated = { x: d.x, z: d.z };
+        this.audio.play('cloth', { gain: 0.5, rate: 0.8 });
         break;
+      }
     }
   }
 
@@ -593,18 +626,20 @@ export class Game {
       await this.until(() => !this.scare || this.scare.cut);
       this.ui?.root.classList.remove('scaring');
       this.events.onDeath?.(by);
-      await this.until(() => !this.scare || this.scare.t >= SCARE_CUT + 1.5);
+      await this.until(() => !this.scare || this.scare.t >= SCARE_CUT + 3.4);
     } else {
       this.events.onDeath?.(by);
       this.post.vhs.uniforms.uGlitch.value = 1;
       this.fadeTarget = 1;
-      await new Promise((r) => setTimeout(r, 2600));
+      await new Promise((r) => setTimeout(r, 3600));
     }
     this.endScare();
     this.run++;
     this.sanity = 0.8;
-    this.ui?.toast(this.startLevel === 0 ? 'You wake up back at the base.' : `You wake up at the start of ${LEVELS[this.startLevel].name}.`);
     await this.enterLevel(this.startLevel);
+    this.lifeTime = 0;
+    this.lifeDist = 0;
+    this.ui?.hideDeath();
   }
 
   private until(cond: () => boolean) {
@@ -644,11 +679,11 @@ export class Game {
     const seen = dir.lengthSq() > 0.01 && dir.lengthSq() < 16 && this.collider.los(eye.x, eye.z, e.pos.x, e.pos.z);
     if (!seen) dir.set(0, 0, -1).applyQuaternion(s.q0).setY(0);
     dir.normalize();
-    const DIST: Record<string, number> = { crawler: 0.5, dweller: 0.55, watcher: 0.7, smiler: 0.5, mimic: 0.45 };
+    const DIST: Record<string, number> = { hound: 0.5, howler: 0.75, smiler: 0.5, skinstealer: 0.45 };
     const rush = 1 - Math.min(1, s.t / 0.16);
     const dist = (DIST[e.kind] ?? 0.5) + 1.1 * rush * rush;
     // quadrupeds rear up at you so you get the face, not the back
-    const rear = e.kind === 'crawler' || e.kind === 'dweller' ? -1.15 * Math.min(1, s.t / 0.2) - 0.25 : 0;
+    const rear = e.kind === 'hound' ? -1.15 * Math.min(1, s.t / 0.2) - 0.25 : 0;
     e.obj.position.set(eye.x + dir.x * dist, 0, eye.z + dir.z * dist);
     e.obj.rotation.set(rear, Math.atan2(-dir.x, -dir.z), 0, 'YXZ');
     if (e.kind === 'smiler') e.obj.position.y = eye.y - 0.1;
@@ -657,7 +692,7 @@ export class Game {
     const head = headBone ? headBone.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(0, 0.08, 0)) : e.obj.position.clone();
     if (headBone) {
       // move the whole body so its face sits `dist` in front of our eyes; tall ones keep their height
-      const want = new THREE.Vector3(eye.x + dir.x * dist, e.kind === 'watcher' ? head.y : eye.y - 0.03, eye.z + dir.z * dist);
+      const want = new THREE.Vector3(eye.x + dir.x * dist, e.kind === 'howler' ? head.y : eye.y - 0.03, eye.z + dir.z * dist);
       const off = want.clone().sub(head);
       e.obj.position.add(off);
       head.copy(want);

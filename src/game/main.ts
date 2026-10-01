@@ -74,7 +74,6 @@ const ui = new UI(game, {
     busy = true;
     ui.onlineLink = '';
     await launch('ai', 'ai-' + Date.now(), 'AI companions · offline', mode, level);
-    ui.toast('Two wanderers found you. They seem to know the way… mostly.');
     busy = false;
   },
   publicWorld: async (region) => {

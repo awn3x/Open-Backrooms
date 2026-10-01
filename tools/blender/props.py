@@ -8,7 +8,8 @@ import math
 import random
 from pathlib import Path
 
-import bpy  # noqa: F401  (must precede bmesh)
+import bpy
+import bake as BK  # noqa: F401  (must precede bmesh)
 import bmesh
 from mathutils import Vector
 from PIL import Image, ImageDraw, ImageFont
@@ -745,26 +746,77 @@ ALL = [outlet_duplex, outlet_twoprong, outlet_gfci, outlet_broken, switch_plate,
 
 # ------------------------------------------------------------------ hub base
 def lockers():
-    """Row of 5 steel lockers, 0.38 wide each. Origin: floor, back against the wall, facing -Y."""
+    """Row of 5 old steel school/staff lockers: chipped green-grey paint, rust running from vents and hinges,
+    dents, a padlock on one. Origin: floor, back against the wall, facing -Y."""
     reset()
     m = M()
-    body_m = mat("LockerPaint", (0.24, 0.3, 0.36), 0.45, 0.4)
-    dark = m["dark"]
+    paint = bpy.data.materials.new("LockerPaint")
+    BK.paint_metal(paint, (0.2, 0.26, 0.23), rust=0.7, chip=0.8, streaks=0.9)
     parts = []
     W, H, D = 0.38, 1.85, 0.45
+    rng = __import__("random").Random(5)
     for k in range(5):
         x = (k - 2) * W
-        parts.append(box("body", (W - 0.004, D, H), (x, -D / 2, H / 2 + 0.08), body_m, bevel=0.004))
-        door = box("door", (W - 0.03, 0.012, H - 0.06), (x, -D - 0.004, H / 2 + 0.08), body_m, bevel=0.003)
-        vents = [box("vent", (W - 0.12, 0.02, 0.008), (x, -D - 0.008, H - 0.12 - v * 0.03), dark) for v in range(5)]
+        parts.append(box("body", (W - 0.004, D, H), (x, -D / 2, H / 2 + 0.08), paint, bevel=0.006))
+        door = box("door", (W - 0.03, 0.014, H - 0.06), (x, -D - 0.004, H / 2 + 0.08), paint, bevel=0.004)
+        vents = [box("vent", (W - 0.12, 0.03, 0.009), (x, -D - 0.008, H - 0.1 - v * 0.028), paint) for v in range(6)]
+        vents += [box("vent", (W - 0.12, 0.03, 0.009), (x, -D - 0.008, 0.3 - v * 0.028), paint) for v in range(4)]
         cut_many(door, vents)
+        # a dent in some doors
+        if rng.random() < 0.5:
+            for vt in door.data.vertices:
+                d = ((vt.co.x - x) ** 2 + (vt.co.z - 0.9) ** 2) ** 0.5
+                if d < 0.12 and vt.co.y < -D:
+                    vt.co.y += 0.01 * (1 - d / 0.12)
         parts.append(door)
-        parts.append(box("handle", (0.02, 0.03, 0.12), (x + W / 2 - 0.05, -D - 0.02, 1.0), m["steel"], bevel=0.004))
-        parts.append(box("label", (0.08, 0.004, 0.03), (x, -D - 0.012, 1.55), mat("LockerLabel", (0.85, 0.83, 0.75), 0.6)))
-    parts.append(box("base", (5 * W, D, 0.08), (0, -D / 2, 0.04), dark))
-    join(parts, "Lockers")
+        parts.append(box("handle", (0.022, 0.035, 0.13), (x + W / 2 - 0.05, -D - 0.022, 1.0), paint, bevel=0.005))
+        for hz in (0.35, 1.0, 1.65):
+            parts.append(cyl("hinge", 0.008, 0.06, (x - W / 2 + 0.02, -D - 0.01, hz), (0, 0, 0), paint, 8))
+        parts.append(box("plate", (0.07, 0.004, 0.028), (x, -D - 0.013, 1.55), paint))
+    lock = cyl("padlock", 0.022, 0.012, (0.02 + W / 2 - 0.05, -D - 0.05, 0.93), (1.5708, 0, 0), m["steel"], 16)
+    shackle = torus("shackle", 0.014, 0.003, (0.02 + W / 2 - 0.05, -D - 0.05, 0.955), (1.5708, 0, 0), m["steel"])
+    parts += [lock, shackle]
+    parts.append(box("base", (5 * W, D, 0.08), (0, -D / 2, 0.04), paint))
+    ob = join(parts, "Lockers")
+    BK.bake_prop(ob, "lockers", 1024)
     export("lockers")
-    preview("lockers", (0, -0.3, 1.0), 3.6, 10, -25)
+
+
+def armchair():
+    """The lone worn armchair: a faded mustard 70s/80s club chair with rolled arms, a sagging seat cushion,
+    button tufting and short tapered wooden legs. Origin: floor centre, facing -Y."""
+    reset()
+    fab = bpy.data.materials.new("ArmchairFabric")
+    BK.upholstery(fab, (0.42, 0.28, 0.08), wear=0.7, stains=0.6, rib=0.8)
+    leg = bpy.data.materials.new("ArmchairLeg")
+    BK.wood(leg, (0.22, 0.12, 0.05))
+    parts = [
+        box("base", (0.86, 0.8, 0.26), (0, 0, 0.29), fab, bevel=0.06, segs=4),
+        box("back", (0.86, 0.22, 0.62), (0, 0.32, 0.68), fab, bevel=0.09, segs=4),
+        box("armL", (0.17, 0.78, 0.36), (-0.4, 0.01, 0.5), fab, bevel=0.075, segs=4),
+        box("armR", (0.17, 0.78, 0.36), (0.4, 0.01, 0.5), fab, bevel=0.075, segs=4),
+        box("seat", (0.62, 0.62, 0.13), (0, -0.06, 0.47), fab, bevel=0.05, segs=4),
+        box("backcushion", (0.6, 0.12, 0.44), (0, 0.19, 0.74), fab, bevel=0.05, segs=4),
+    ]
+    for p in parts:
+        p.modifiers.new("sub", "SUBSURF").levels = 2
+    # sag the seat cushion and tuft the back with buttons
+    seat, bc = parts[4], parts[5]
+    for vt in seat.data.vertices:
+        d = (vt.co.x ** 2 + (vt.co.y + 0.06) ** 2) ** 0.5
+        if vt.co.z > 0.47:
+            vt.co.z -= 0.035 * max(0.0, 1 - d / 0.35)
+    btn = mat("ArmchairButton", (0.25, 0.16, 0.05), 0.6)
+    for bx in (-0.17, 0.0, 0.17):
+        for bz in (0.62, 0.84):
+            parts.append(sphere("button", 0.012, (bx, 0.125, bz), btn, (1, 0.6, 1), 8, 6))
+    for sx in (-0.36, 0.36):
+        for sy in (-0.32, 0.32):
+            parts.append(cyl("leg", 0.022, 0.16, (sx, sy, 0.08), (0, 0, 0), leg, 10, r2=0.014))
+    ob = join(parts, "Armchair")
+    shade_smooth(ob, 60)
+    BK.bake_prop(ob, "armchair", 1024)
+    export("armchair")
 
 
 def kiosk():
@@ -802,23 +854,39 @@ def bulletin_board():
 
 
 def couch():
+    """Old three-seat sofa: soft rolled shapes, sagging cushions, faded brown corduroy."""
     reset()
-    fabric = mat("CouchFabric", (0.33, 0.26, 0.2), 0.95)
+    fab = bpy.data.materials.new("CouchFabric")
+    BK.upholstery(fab, (0.24, 0.17, 0.11), wear=0.6, stains=0.55, rib=1.0)
+    leg = bpy.data.materials.new("CouchLeg")
+    BK.wood(leg, (0.12, 0.07, 0.04))
     parts = [
-        box("seat", (1.8, 0.8, 0.22), (0, 0, 0.3), fabric, bevel=0.05, segs=3),
-        box("back", (1.8, 0.22, 0.6), (0, 0.3, 0.6), fabric, bevel=0.06, segs=3),
-        box("armL", (0.2, 0.8, 0.55), (-0.9, 0, 0.45), fabric, bevel=0.06, segs=3),
-        box("armR", (0.2, 0.8, 0.55), (0.9, 0, 0.45), fabric, bevel=0.06, segs=3),
+        box("seat", (1.8, 0.8, 0.22), (0, 0, 0.3), fab, bevel=0.06, segs=4),
+        box("back", (1.8, 0.24, 0.6), (0, 0.3, 0.62), fab, bevel=0.09, segs=4),
+        box("armL", (0.2, 0.82, 0.5), (-0.9, 0, 0.45), fab, bevel=0.09, segs=4),
+        box("armR", (0.2, 0.82, 0.5), (0.9, 0, 0.45), fab, bevel=0.09, segs=4),
     ]
+    cushions = []
     for k in range(3):
-        parts.append(box("cushion", (0.56, 0.7, 0.12), (-0.58 + k * 0.58, -0.02, 0.46), fabric, bevel=0.05, segs=3))
+        c = box("cushion", (0.56, 0.7, 0.13), (-0.58 + k * 0.58, -0.02, 0.475), fab, bevel=0.05, segs=4)
+        cushions.append(c)
+        parts.append(c)
+        parts.append(box("backcushion", (0.55, 0.14, 0.42), (-0.58 + k * 0.58, 0.16, 0.73), fab, bevel=0.06, segs=4))
+    for p in parts:
+        p.modifiers.new("sub", "SUBSURF").levels = 2
+    for k, c in enumerate(cushions):
+        cx = -0.58 + k * 0.58
+        for vt in c.data.vertices:
+            d = ((vt.co.x - cx) ** 2 + (vt.co.y + 0.05) ** 2) ** 0.5
+            if vt.co.z > 0.47:
+                vt.co.z -= (0.03 + 0.015 * (k == 1)) * max(0.0, 1 - d / 0.3)
     for sx in (-0.85, 0.85):
         for sy in (-0.3, 0.3):
-            parts.append(cyl("foot", 0.025, 0.2, (sx, sy, 0.1), (0, 0, 0), mat("Dark", (0.02, 0.02, 0.02), 0.8), 8))
+            parts.append(cyl("foot", 0.025, 0.2, (sx, sy, 0.1), (0, 0, 0), leg, 10, r2=0.016))
     ob = join(parts, "Couch")
-    shade_smooth(ob, 40)
+    shade_smooth(ob, 60)
+    BK.bake_prop(ob, "couch", 1024)
     export("couch")
-    preview("couch", (0, 0, 0.4), 3.0, 15, -30)
 
 
 def safe_sign():
@@ -844,4 +912,4 @@ def safe_sign():
     preview("safe_sign", (0, 0, 0), 2.0, 0, 0)
 
 
-ALL += [lockers, kiosk, bulletin_board, couch, safe_sign]
+ALL += [lockers, kiosk, bulletin_board, couch, safe_sign, armchair]

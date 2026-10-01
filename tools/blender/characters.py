@@ -575,33 +575,49 @@ def watcher():
 
 
 def smiler():
-    """Glowing grin and eyes on a near-invisible shadow body. Static; jittered in-engine."""
+    """Smiler (lore): a too-wide glowing grin of uneven teeth and two glowing eyes, hanging in the dark on a
+    body you can't quite see. Static; jittered and faded in-engine."""
     reset()
     glow = mat("Glow_Smile", (0.95, 0.93, 0.85), 0.3, emit=(1.0, 0.98, 0.88), emit_strength=6.0)
+    gum = mat("Glow_Gum", (0.3, 0.05, 0.04), 0.5, emit=(0.5, 0.06, 0.04), emit_strength=1.2)
     eye = mat("Glow_SmileEye", (1, 1, 0.9), 0.3, emit=(1.0, 0.97, 0.85), emit_strength=8.0)
     shadow = mat("Shadow", (0.0, 0.0, 0.0), 1.0)
     parts = []
     rng = random.Random(12)
     for row in (0, 1):
-        n = 26
+        n = 34
         for k in range(n):
+            if rng.random() < 0.1:
+                continue  # missing teeth
             t = k / (n - 1)
-            a = (t - 0.5) * 2.6
-            x = math.sin(a) * 0.3
-            z = -0.12 + (1 - math.cos(a)) * 0.11 + (0.0 if row == 0 else -0.045)
-            hgt = 0.05 * (1 - abs(t - 0.5) * 0.9) * rng.uniform(0.8, 1.2)
-            tooth = box("tooth", (0.021, 0.012, hgt), (x, -math.cos(a) * 0.06, z - (hgt / 2 if row == 0 else -hgt / 2) + (0.02 if row == 0 else -0.02)), glow, bevel=0.004)
-            tooth.rotation_euler = (0, rng.uniform(-0.12, 0.12) - a * 0.35, -a * 0.4)
+            a = (t - 0.5) * 2.9
+            x = math.sin(a) * 0.32
+            z = -0.12 + (1 - math.cos(a)) * 0.12 + (0.0 if row == 0 else -0.05)
+            hgt = 0.055 * (1 - abs(t - 0.5) * 0.9) * rng.uniform(0.55, 1.5)
+            w = rng.uniform(0.011, 0.02)
+            tooth = box("tooth", (w, 0.012, hgt), (x, -math.cos(a) * 0.065, z - (hgt / 2 if row == 0 else -hgt / 2) + (0.02 if row == 0 else -0.02)), glow, bevel=0.003)
+            tooth.rotation_euler = (rng.uniform(-0.15, 0.15), rng.uniform(-0.25, 0.25) - a * 0.35, -a * 0.4)
             parts.append(tooth)
-    for sx in (-1, 1):
-        e = sphere("eye", 0.045, (sx * 0.16, -0.02, 0.15), eye, (1.4, 0.5, 0.42), 16, 10)
-        e.rotation_euler = (0, -sx * 0.3, 0)
+        # a thin dim gum line behind each row
+        for k in range(18):
+            t = k / 17
+            a = (t - 0.5) * 2.9
+            gz = -0.12 + (1 - math.cos(a)) * 0.12 + (0.022 if row == 0 else -0.072)
+            parts.append(box("gum", (0.04, 0.008, 0.01), (math.sin(a) * 0.32, -math.cos(a) * 0.06 + 0.006, gz), gum, bevel=0.003))
+    for sx, sc in ((-1, 1.0), (1, 0.82)):  # mismatched eyes
+        e = sphere("eye", 0.045 * sc, (sx * 0.17, -0.02, 0.16 + (0.012 if sx > 0 else 0)), eye, (1.5, 0.5, 0.36), 16, 10)
+        e.rotation_euler = (0, -sx * 0.32, sx * 0.08)
         parts.append(e)
-    body = sphere("body", 0.5, (0, 0.35, -0.2), shadow, (1.0, 0.8, 1.6), 16, 12)
+    # amorphous shadow mass (noise-displaced), not an egg
+    body = sphere("body", 0.5, (0, 0.38, -0.25), shadow, (1.0, 0.75, 1.7), 24, 16)
+    for vt in body.data.vertices:
+        c = vt.co
+        n = math.sin(c.x * 9 + c.z * 4) * math.sin(c.y * 7 + c.z * 11) * 0.25 + math.sin(c.z * 23) * 0.06
+        vt.co = c * (1 + n)
     parts.append(body)
     join(parts, "Smiler")
     export("smiler")
     preview("smiler", (0, 0, 0), 1.6, 0, 0)
 
 
-ALL = [crawler, dweller, player, watcher, smiler]
+ALL = [smiler]  # people and creatures now come from mh_build.py (MakeHuman-based)
