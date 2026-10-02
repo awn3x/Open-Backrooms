@@ -37,7 +37,7 @@
 
 ## Controls
 
-WASD move · Shift sprint · C crouch · Space jump · F flashlight · E interact · Q drink Almond Water · R swap battery · T chat · V push-to-talk · Tab players / pause · Esc pause. Gamepads are supported.
+WASD move · Shift sprint · C crouch · Space jump · F flashlight · E interact · Q drink Almond Water · R swap battery · T chat · V push-to-talk · Tab players / pause · Esc pause. Every key can be rebound in Settings, crouch and sprint can be set to toggle, and gamepads are supported.
 
 ## Run locally
 

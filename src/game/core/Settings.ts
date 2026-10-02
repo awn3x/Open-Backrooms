@@ -23,7 +23,15 @@ export interface Settings {
   showFps: boolean;
   rawInput: boolean;
   reduceFlashes: boolean;
+  crouchToggle: boolean;
+  sprintToggle: boolean;
+  keys: Record<KeyAction, string>;
+  lastMode: 'escape' | 'endless';
+  lastLevel: number;
 }
+
+export type KeyAction = 'forward' | 'back' | 'left' | 'right' | 'sprint' | 'crouch' | 'jump' | 'flashlight' | 'interact' | 'drink' | 'battery';
+export const DEFAULT_KEYS: Record<KeyAction, string> = { forward: 'KeyW', back: 'KeyS', left: 'KeyA', right: 'KeyD', sprint: 'ShiftLeft', crouch: 'KeyC', jump: 'Space', flashlight: 'KeyF', interact: 'KeyE', drink: 'KeyQ', battery: 'KeyR' };
 
 export const DEFAULTS: Settings = {
   name: '',
@@ -45,6 +53,11 @@ export const DEFAULTS: Settings = {
   showFps: false,
   rawInput: false,
   reduceFlashes: false,
+  crouchToggle: false,
+  sprintToggle: false,
+  keys: { ...DEFAULT_KEYS },
+  lastMode: 'escape',
+  lastLevel: 0,
 };
 
 function read<T>(key: string, fallback: T): T {
@@ -68,6 +81,7 @@ const ADJ = ['Lost', 'Damp', 'Quiet', 'Humming', 'Yellow', 'Pale', 'Wandering', 
 const NOUN = ['Wanderer', 'Tenant', 'Moth', 'Clerk', 'Signal', 'Drifter', 'Janitor', 'Echo', 'Visitor', 'Surveyor'];
 
 export const settings: Settings = read('ob.settings2', DEFAULTS);
+settings.keys = { ...DEFAULT_KEYS, ...(settings.keys ?? {}) };
 // carry the player's name over from the previous settings version
 if (!settings.name) settings.name = read<{ name?: string }>('ob.settings', {}).name ?? '';
 if (!settings.name) settings.name = ADJ[Math.floor(Math.random() * ADJ.length)] + NOUN[Math.floor(Math.random() * NOUN.length)] + Math.floor(Math.random() * 90 + 10);
