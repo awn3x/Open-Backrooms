@@ -17,6 +17,8 @@ import { Sparks } from './render/Sparks';
 import { Player, type StepEvent } from './player/Player';
 import { AudioEngine, type Voice } from './audio/AudioEngine';
 import { loadProtos, setMaxAnisotropy } from './assets';
+import { ventAir, ductTick } from './audio/synth';
+import { STEP_TRIM } from './audio/AudioEngine';
 import type { Protos } from './world/mesher';
 import { WorldObjects, HUB_CENTER, type Interactable } from './WorldObjects';
 import { EntityManager, type Entity } from './entities/EntityManager';
@@ -76,6 +78,9 @@ export class Game {
   private heartT = 0;
   private eventT = 8;
   private sparkT = 1;
+  /** air loops on the closest vents, keyed by position */
+  private ventVoices = new Map<string, Voice>();
+  private ventT = 0;
   private coinDist = 0;
   private exposure = 1;
   private seatStand: { x: number; z: number } | null = null;
@@ -162,6 +167,8 @@ export class Game {
     this.protos = await loadProtos((f) => progress(0.1 + f * 0.4, 'Loading models'));
     progress(0.55, 'Loading sound');
     await this.audio.init();
+    this.audio.setBuffer('vent_air', ventAir(this.audio.ctx));
+    this.audio.setBuffer('duct_tick', [1, 2, 3].map((k) => ductTick(this.audio.ctx, k)));
     await this.audio.preload([
       'step_carpet', 'step_concrete', 'step_metal', 'step_water', 'land_carpet', 'land_concrete', 'land_metal', 'cloth',
       'breath_in', 'breath_out', 'breath_panic', 'heartbeat', 'hum', 'spark', 'tube_flicker', 'ballast_click',
@@ -199,6 +206,8 @@ export class Game {
     for (const a of this.ambience) a.stop(0.8);
     for (const h of this.hum) h?.stop(0.3);
     this.hum = [];
+    for (const v of this.ventVoices.values()) v.stop(0.3);
+    this.ventVoices.clear();
     this.powerEvt = null;
     WU.uPower.value.w = 0;
 
@@ -282,7 +291,7 @@ export class Game {
       this.audio.play(`land_${def.surface}`, { gain: 0.5 + 0.4 * e.loudness, reverb: 0.25 });
     } else {
       const name = this.surfaceAt(p.x, p.z);
-      const g = (this.player.crouching ? 0.25 : this.player.sprinting ? 0.95 : 0.5) * (name === 'step_metal' ? 0.7 : 1);
+      const g = (this.player.crouching ? 0.25 : this.player.sprinting ? 0.95 : 0.5) * (STEP_TRIM[name] ?? 1);
       this.audio.play(name, { gain: g, rate: 0.94 + Math.random() * 0.12, pan: e.foot * 0.18, reverb: this.player.sprinting ? 0.3 : 0.18 });
       if (Math.random() < (this.player.sprinting ? 0.5 : 0.18)) this.audio.play('cloth', { gain: 0.12 + (this.player.sprinting ? 0.1 : 0), rate: 0.9 + Math.random() * 0.2 });
     }
@@ -352,7 +361,12 @@ export class Game {
     const tgt = this.camera.position.clone().addScaledVector(fwd, 6);
     this.lights.flashTarget.position.lerp(tgt, damp(14, dt));
     const flick = p.battery < 0.15 ? (Math.random() < 0.1 ? 0.2 : 1) : 1;
-    fl.intensity = p.flashlight ? 38 * flick * (0.4 + 0.6 * Math.min(1, p.battery * 3)) : 0;
+    // A torch held a metre from a ceiling tile would blow it out to a flat white disc; ease the
+    // beam off as whatever it's pointed at gets close, the way your eyes and the torch's own
+    // falloff would, so surface detail survives up close and in blackouts.
+    const hitD = this.beamDistance(fwd);
+    this.beamScale += (Math.min(1, Math.max(0.06, Math.pow(hitD / 3.2, 1.7))) - this.beamScale) * damp(10, dt);
+    fl.intensity = p.flashlight ? 38 * this.beamScale * flick * (0.4 + 0.6 * Math.min(1, p.battery * 3)) : 0;
     const pro = profile.flashlight === 'torch_pro';
     if (pro) fl.intensity *= 1.5;
     if (p.flashlight) p.battery = Math.max(0, p.battery - dt / (pro ? 840 : 420));
@@ -493,6 +507,38 @@ export class Game {
           }
         }
     }
+    // vents breathe: air loops on the nearest few, and now and then the ductwork ticks
+    this.ventT -= dt;
+    if (this.ventT <= 0 && this.world) {
+      this.ventT = 0.4;
+      const near: { k: string; x: number; y: number; z: number; d: number }[] = [];
+      for (const c of this.world.chunks.values())
+        for (const v of c.layout.props) {
+          if (v.kind !== 'vent_wall' && v.kind !== 'vent_ceiling') continue;
+          const d = Math.hypot(v.x - p.pos.x, v.z - p.pos.z);
+          if (d < 12) near.push({ k: `${v.x.toFixed(2)},${v.z.toFixed(2)}`, x: v.x + Math.sin(v.rot) * 0.05, y: v.y, z: v.z + Math.cos(v.rot) * 0.05, d });
+        }
+      near.sort((a, b) => a.d - b.d);
+      const keep = new Set(near.slice(0, 3).map((v) => v.k));
+      for (const [k, v] of this.ventVoices)
+        if (!keep.has(k) || !this.audio.voices.has(v)) {
+          v.stop(0.6);
+          this.ventVoices.delete(k);
+        }
+      for (const v of near.slice(0, 3)) {
+        if (this.ventVoices.has(v.k)) continue;
+        const voice = this.audio.play('vent_air', { loop: true, gain: 0, pos: v, bus: 'amb', refDistance: 0.6, maxDistance: 14, occlude: true, rate: 0.92 + (Math.abs(v.x * 7.3 + v.z * 3.1) % 1) * 0.16 });
+        if (voice) {
+          voice.baseGain = 0.22;
+          voice.gain.gain.setTargetAtTime(0.22, this.audio.ctx.currentTime, 0.5);
+          this.ventVoices.set(v.k, voice);
+        }
+      }
+      if (near.length && near[0].d < 7 && Math.random() < 0.035) {
+        const v = near[0];
+        this.audio.play('duct_tick', { pos: v, gain: 0.5, rate: 0.85 + Math.random() * 0.3, reverb: 0.35, occlude: true });
+      }
+    }
     // distant events
     this.eventT -= dt;
     if (this.eventT <= 0 && !safe) {
@@ -539,6 +585,29 @@ export class Game {
       }
     }
     P.z = e.r;
+  }
+
+  private beamScale = 1;
+  /** rough distance from the camera to the first surface along `dir`: ceiling, floor or wall */
+  private beamDistance(dir: THREE.Vector3): number {
+    const c = this.camera.position;
+    const H = LEVELS[this.level].height;
+    let d = 12;
+    if (dir.y > 0.02) d = Math.min(d, (H - c.y) / dir.y);
+    if (dir.y < -0.02) d = Math.min(d, c.y / -dir.y);
+    const hl = Math.hypot(dir.x, dir.z);
+    if (hl > 0.05) {
+      const ux = dir.x / hl;
+      const uz = dir.z / hl;
+      for (const r of [0.4, 0.8, 1.3, 2, 3, 4.5, 6.5]) {
+        if (r / hl > d) break;
+        if (!this.collider.los(c.x, c.z, c.x + ux * r, c.z + uz * r)) {
+          d = Math.min(d, r / hl);
+          break;
+        }
+      }
+    }
+    return d;
   }
 
   // ------------------------------------------------------------------ interaction

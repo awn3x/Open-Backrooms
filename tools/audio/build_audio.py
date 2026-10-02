@@ -844,7 +844,10 @@ SCREAM_PRESETS = [  # tuned with tools/audio/tune.py against YAMNet: 'Screaming'
 
 def _master(x, drive=1.4, peak_db=-0.5):
     x = np.tanh(x / (np.abs(x).max() + 1e-9) * drive)
-    return norm(x, peak_db)
+    # tanh drive on asymmetric material leaves a DC offset; and lossy codecs overshoot a driven
+    # signal by 2-3 dB, so keep at least 1 dB of headroom
+    x = hp(x, 20)
+    return norm(x, min(peak_db, -1.0))
 
 
 STING_PRE = 0.5  # seconds of lead-in before the hit in every sting_* file (the game schedules to it)

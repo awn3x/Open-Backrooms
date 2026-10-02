@@ -7,6 +7,7 @@ import type { ChunkManager, LoadedChunk } from './world/ChunkManager';
 import type { Collider, Box } from './world/collision';
 import type { Pickup } from './world/layout';
 import { LEVELS } from './levels/levels';
+import { BoardDisplay } from './render/BoardDisplay';
 
 export interface Interactable {
   id: string;
@@ -52,6 +53,7 @@ export class WorldObjects {
   exitObj: THREE.Object3D | null = null;
   exitAnim: THREE.Object3D | null = null;
   private hubBoxes: Box[] = [];
+  private boardDisplay: BoardDisplay | null = null;
 
   /** endless mode: the level has no way out */
   noExit = false;
@@ -78,7 +80,10 @@ export class WorldObjects {
     await Promise.all([
       place('lockers', -1.4, 0, N, 0),
       place('kiosk', E - 0.36, 0, -2.4, -Math.PI / 2),
-      place('bulletin_board', W, 1.45, -2.2, Math.PI / 2),
+      place('bulletin_board', W, 1.45, -2.2, Math.PI / 2).then((o) => {
+        this.boardDisplay = new BoardDisplay();
+        o.add(this.boardDisplay.mesh);
+      }),
       place('couch', -2.6, 0, S - 0.45, Math.PI),
       place('armchair', 1.4, 0, S - 0.5, Math.PI + 0.25),
       place('safe_sign', E, 2.3, 1.22, -Math.PI / 2),
@@ -181,6 +186,8 @@ export class WorldObjects {
   }
 
   dispose() {
+    this.boardDisplay?.dispose();
+    this.boardDisplay = null;
     this.root.clear();
     this.interactables = [];
     this.pickupMeshes.clear();

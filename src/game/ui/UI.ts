@@ -6,8 +6,9 @@ import './ui.css';
 import { settings, saveSettings, profile, saveProfile, spend, onCoins, DEFAULT_KEYS, type KeyAction } from '../core/Settings';
 import type { Game } from '../Game';
 import { detectRegion, REGION_NAMES, type Region } from '../net/Net';
-import { lobby, type GameMode, type Listing } from '../net/Lobby';
-import { board, TIERS, nextReset } from '../net/Board';
+import { lobby, siteUrl, slugName, type GameMode, type Listing } from '../net/Lobby';
+import { nostr } from '../net/Nostr';
+import { board, TIERS, nextReset, BOARD_SLOTS, type Note } from '../net/Board';
 import { censor, containsProfanity, sanitize } from './profanity';
 import { LEVELS } from '../levels/levels';
 import { OUTFITS } from '../entities/Avatar';
@@ -311,14 +312,15 @@ export class UI {
         <button class="btn primary go-public">QUICK JOIN</button>
       </div>
       <div data-p="create" class="hidden">
-        <div class="field"><label>Room name</label><input type="text" class="rname" maxlength="32" placeholder="e.g. level-zero-crew"></div>
+        <div class="field"><label>Room name <span class="count avail"></span></label><div class="urlbox"><span>${esc(siteUrl())}?room=</span><input type="text" class="rname" maxlength="32" placeholder="level-zero-crew" spellcheck="false"></div></div>
         <div class="field"><label>Password (optional: players will be asked for it)</label><input type="password" class="rpass" maxlength="40"></div>
         ${this.modeFields('h')}
-        <p class="sub">Your room is listed in Browse Games for everyone. As host you can remove players from the pause menu.</p>
+        <p class="sub">That's your invite link. Room names are unique: if someone is already hosting one with that name, pick another. Your room is listed in Browse Games, and as host you can remove players from the pause menu.</p>
         <button class="btn primary go-create">HOST &amp; ENTER</button>
       </div>
       <div data-p="join" class="hidden">
-        <div class="field"><label>Invite link</label><input type="text" class="jname" maxlength="300" placeholder="https://…/?room=…"></div>
+        <div class="field"><label>Invite link</label><div class="urlbox"><span>${esc(siteUrl())}?room=</span><input type="text" class="jname" maxlength="300" placeholder="room-name" spellcheck="false"></div></div>
+        <p class="sub">Type the room name, or paste the whole link a friend sent you.</p>
         <div class="field"><label>Password (if any)</label><input type="password" class="jpass" maxlength="40"></div>
         <button class="btn primary go-join">JOIN</button>
       </div>
@@ -381,7 +383,28 @@ export class UI {
     $('.pwgo', w).onclick = pwGo;
     $('.pwin', w).addEventListener('keydown', (e) => (e as KeyboardEvent).key === 'Enter' && pwGo());
     // --- other tabs
-    const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9-_]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
+    const slug = slugName;
+    const rname = $('.rname', w) as HTMLInputElement;
+    const avail = $('.avail', w);
+    rname.oninput = () => {
+      const n = slug(rname.value);
+      const mine = lobby.byName(n).every((l) => l.host === nostr.pubkey);
+      avail.textContent = !n ? '' : mine ? `${n} · looks free` : `${n} · taken`;
+      avail.style.color = !n ? '' : mine ? 'var(--ok)' : 'var(--danger)';
+    };
+    // a pasted full link goes in whole; keep just the room part
+    const jname = $('.jname', w) as HTMLInputElement;
+    jname.addEventListener('paste', () =>
+      setTimeout(() => {
+        try {
+          const u = new URL(jname.value.trim());
+          const r = u.searchParams.get('room');
+          if (r) jname.value = r + (u.hash ? u.hash : '');
+        } catch {
+          /* not a URL */
+        }
+      }),
+    );
     const getMode = this.wireMode(w, 'h');
     $('.go-public', w).onclick = () => this.actions.publicWorld(this.region);
     $('.go-create', w).onclick = () => {
@@ -392,10 +415,10 @@ export class UI {
       this.actions.createRoom(n, ($('.rpass', w) as HTMLInputElement).value, mode, level);
     };
     $('.go-join', w).onclick = () => {
-      let v = ($('.jname', w) as HTMLInputElement).value.trim();
+      let v = jname.value.trim();
       let pass = ($('.jpass', w) as HTMLInputElement).value;
       try {
-        const u = new URL(v);
+        const u = new URL(v.includes('://') ? v : siteUrl() + '?room=' + v);
         v = u.searchParams.get('room') ?? v;
         const k = new URLSearchParams(u.hash.slice(1)).get('k');
         if (k && !pass) pass = k;
@@ -529,10 +552,10 @@ export class UI {
   openPause() {
     const net = this.game.net;
     const players = net ? [...net.peers.values()] : [];
-    const w = this.openModal(`<h2>PAUSED</h2><div class="sub">${LEVELS[this.game.level].name} — ${LEVELS[this.game.level].subtitle}${this.online ? ` · ${esc(net?.label ?? '')}` : ''}</div>
+    const w = this.openModal(`<div class="pause"><h2>PAUSED</h2><div class="sub">${LEVELS[this.game.level].name} — ${LEVELS[this.game.level].subtitle}${this.online ? ` · ${esc(net?.label ?? '')}` : ''}</div>
       ${this.onlineLink ? `<div class="field"><label>Invite link</label><div class="linkbox"><input type="text" readonly value="${esc(this.onlineLink)}"><button class="btn copy">COPY</button></div></div>` : ''}
       ${this.online ? `<div class="field"><label>Players (${players.length + 1}/8)</label><div class="list players"><div class="item"><span>${esc(settings.name)} (you)</span><span class="ping">L${this.game.level}</span></div>${players.map((p) => `<div class="item"><span>${esc(p.name)}${net?.hostPeer === p.id ? ' (host)' : ''}</span><span class="row" style="gap:10px"><span class="ping">L${p.level} · ${Math.round(p.ping)}ms</span>${net?.isHost ? `<button class="btn kick" data-id="${esc(p.id)}">KICK</button>` : ''}</span></div>`).join('')}</div></div>` : ''}
-      <div class="pause-actions"><button class="btn primary resume">RESUME</button><button class="btn settings">SETTINGS</button><button class="btn how">CONTROLS</button>${!this.online && this.game.level !== this.game.startLevel ? '<button class="btn base">RETURN TO START</button>' : ''}<button class="btn leave">LEAVE TO MENU</button></div>`);
+      <div class="pause-actions"><button class="btn primary resume">RESUME</button><button class="btn settings">SETTINGS</button><button class="btn how">CONTROLS</button>${!this.online && this.game.level !== this.game.startLevel ? '<button class="btn base">RETURN TO START</button>' : ''}<button class="btn leave">LEAVE TO MENU</button></div><div class="hint">ESC to resume</div></div>`);
     $('.resume', w).onclick = () => this.closeModal(true);
     w.querySelectorAll<HTMLButtonElement>('.kick').forEach((b) => {
       b.onclick = () => {
@@ -635,29 +658,30 @@ export class UI {
   openBoard() {
     const connected = this.game.mode !== 'ai';
     if (connected) board.connect();
-    const notes = board.list();
+    const { pinned, overflow } = board.split();
     const days = Math.max(1, Math.ceil((nextReset() - Date.now()) / 86400000));
-    const w = this.openModal(`<h2>BULLETIN BOARD</h2><div class="sub">${
+    const post = (n: Note, i: number) =>
+      `<div class="post ${n.expires === Infinity ? 'forever' : ''}" style="--r:${((i * 37) % 5) - 2}deg">${esc(n.text)}<div class="meta">${esc(n.name)}${n.mine ? ' (you)' : ''} · ${new Date(n.t).toLocaleDateString()} · ${n.expires === Infinity ? 'permanent' : `until ${new Date(n.expires).toLocaleDateString()}`}</div></div>`;
+    const w = this.openModal(`<div class="board-panel"><h2>Bulletin Board</h2><div class="sub">${
       connected
-        ? `One board for every player, everywhere. It clears in <b>${days} day${days === 1 ? '' : 's'}</b> (every 30 days) — pay more BC to keep a note up through resets. BC are earned in-game only.`
+        ? `One board for every player, everywhere. Clears in <b>${days} day${days === 1 ? '' : 's'}</b>. Pay more BC to keep a note up through resets.`
         : 'AI mode has no bulletin board, chat or voice.'
     }</div>
-      <div class="posts">${
-        notes.length
-          ? notes
-              .map(
-                (n, i) => `<div class="post ${n.expires === Infinity ? 'forever' : ''}" style="--r:${((i * 37) % 5) - 2}deg">${esc(n.text)}<div class="meta">— ${esc(n.name)}${n.mine ? ' (you)' : ''} · ${new Date(n.t).toLocaleDateString()} · ${n.expires === Infinity ? 'permanent' : `until ${new Date(n.expires).toLocaleDateString()}`}</div></div>`,
-              )
-              .join('')
-          : `<p class="sub">${connected ? 'No notes yet (or still loading). Be the first to leave a warning.' : ''}</p>`
-      }</div>
       ${
         connected
-          ? `<div class="field" style="margin-top:16px"><label>Your note (max 160)</label><textarea class="note" maxlength="160" placeholder="e.g. Arrows near the wet carpet LIE. Head for the red ones."></textarea></div>
-      <div class="field"><label>How long it stays up</label><div class="choice tiers">${TIERS.map((t, i) => `<button data-i="${i}" class="${i === 0 ? 'on' : ''}" ${profile.coins < t.price ? 'disabled' : ''}><b>${t.price.toLocaleString()} BC</b><small>${t.name}</small></button>`).join('')}</div></div>
-      <div class="row"><button class="btn primary pin">PIN NOTE</button><span class="sub" style="margin:0">Balance ${profile.coins.toLocaleString()} BC</span><span class="status"></span></div>`
+          ? `<div class="section-label">On the board <span>${pinned.length} / ${BOARD_SLOTS}</span></div>
+      <div class="posts">${pinned.length ? pinned.map(post).join('') : '<p class="sub">Nothing pinned yet (or still loading). Be the first to leave a warning.</p>'}</div>
+      ${
+        overflow.length
+          ? `<details class="overflow" ${board.full ? 'open' : ''}><summary class="section-label"><span class="lbl">The pile</span><span>${overflow.length} note${overflow.length === 1 ? '' : 's'} that didn't fit</span></summary><div class="posts">${overflow.map(post).join('')}</div></details>`
           : ''
-      }`);
+      }
+      ${board.full ? '<div class="notice"><b>Board full.</b> New notes won\'t be pinned on the board itself. They go to the pile, which everyone sees when they open the board.</div>' : ''}
+      <div class="field" style="margin-top:18px"><label>Your note <span class="count">0 / 160</span></label><textarea class="note" maxlength="160" placeholder="e.g. Arrows near the wet carpet LIE. Head for the red ones."></textarea></div>
+      <div class="field"><label>How long it stays up</label><div class="choice tiers">${TIERS.map((t, i) => `<button data-i="${i}" class="${i === 0 ? 'on' : ''}" ${profile.coins < t.price ? 'disabled' : ''}><b>${t.price.toLocaleString()} BC</b><small>${t.name}</small></button>`).join('')}</div></div>
+      <div class="row"><button class="btn primary pin">${board.full ? 'ADD TO PILE' : 'PIN NOTE'}</button><span class="sub" style="margin:0">Balance ${profile.coins.toLocaleString()} BC</span><span class="status"></span></div>`
+          : ''
+      }</div>`);
     board.onChange = () => {
       if (w.isConnected && !($('.note', w) as HTMLTextAreaElement | null)?.value) this.openBoard();
     };
@@ -668,16 +692,19 @@ export class UI {
         w.querySelectorAll('.tiers button').forEach((x) => x.classList.toggle('on', x === b));
       };
     });
+    const note = w.querySelector('.note') as HTMLTextAreaElement | null;
+    if (note) note.oninput = () => ($('.count', w).textContent = `${note.value.length} / 160`);
     const pin = w.querySelector('.pin') as HTMLButtonElement | null;
-    if (pin)
+    if (pin && note)
       pin.onclick = () => {
-        const text = sanitize(($('.note', w) as HTMLTextAreaElement).value, 160);
+        const text = sanitize(note.value, 160);
         if (text.length < 3) return this.status('Write a little more.');
         if (containsProfanity(text)) return this.status('Please keep notes appropriate.');
         if (!spend(tier.price)) return this.status('Not enough BC.');
+        const full = board.full;
         void board.post(settings.name || 'Wanderer', censor(text), tier);
-        this.toast(tier.id === 'month' ? 'Note pinned until the next reset.' : 'Note pinned.');
-        ($('.note', w) as HTMLTextAreaElement).value = '';
+        this.toast(full ? 'Board full: your note went on the pile.' : tier.id === 'month' ? 'Note pinned until the next reset.' : 'Note pinned.');
+        note.value = '';
         setTimeout(() => this.openBoard(), 300);
       };
   }
@@ -769,11 +796,12 @@ export class UI {
   }
 
   showEnding() {
-    const w = this.openModal(`<h2>DAYLIGHT?</h2><div class="sub">The elevator opened onto a parking lot. Real sun. Real air. You blinked — and the hum came back.</div>
-      <p>You escaped all three levels. +100 BC. Total escapes: ${profile.escapes}.</p>
-      <p class="sub">The Backrooms reshuffle every time you enter. Go again?</p>
-      <button class="btn primary">NOCLIP AGAIN</button>`);
-    $('.btn', w).onclick = () => this.closeModal(true);
+    const w = this.openModal(`<div class="pause ending"><div class="ds-kicker">You found a way out</div><h2>Daylight?</h2>
+      <div class="sub">The elevator opened onto a parking lot. Real sun. Real air. You blinked, and the hum came back.</div>
+      <div class="ds-stats"><span>All three levels</span><span>+100 BC</span><span>Escapes ${profile.escapes}</span></div>
+      <div class="pause-actions"><button class="btn primary again">NOCLIP AGAIN</button></div>
+      <div class="hint">The Backrooms reshuffle every time you enter</div></div>`);
+    $('.again', w).onclick = () => this.closeModal(true);
   }
 
   refreshCoins() {

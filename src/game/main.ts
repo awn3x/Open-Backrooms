@@ -1,5 +1,8 @@
+import '@fontsource/inter/300.css';
 import '@fontsource/inter/400.css';
+import '@fontsource/inter/500.css';
 import '@fontsource/inter/600.css';
+import '@fontsource/caveat/600.css';
 import { Game } from './Game';
 import { UI } from './ui/UI';
 import { Net } from './net/Net';
@@ -7,7 +10,7 @@ import { settings } from './core/Settings';
 import { LEVELS } from './levels/levels';
 import { hashString } from './core/rng';
 import { nostr } from './net/Nostr';
-import { roomIdFor, parseRoom, type GameMode } from './net/Lobby';
+import { roomIdFor, parseRoom, lobby, siteUrl, slugName, type GameMode } from './net/Lobby';
 import { board } from './net/Board';
 import { findPath } from './entities/Pathfinding';
 
@@ -27,9 +30,6 @@ const hashParams = new URLSearchParams(location.hash.slice(1));
 const inviteRoom = params.get('room');
 const invitePass = hashParams.get('k') ?? '';
 
-function siteUrl() {
-  return location.origin + location.pathname.replace(/index\.html$/, '');
-}
 
 let busy = false;
 async function launch(kind: 'solo' | 'ai' | 'online', seed: string, label: string, mode: GameMode = 'escape', level = 0) {
@@ -51,15 +51,21 @@ async function launch(kind: 'solo' | 'ai' | 'online', seed: string, label: strin
   game.input.lock();
 }
 
-/** Turn an invite value (room id, `name~host`, or a bare legacy name) into a room id. */
-function toRoomId(v: string): string {
+/**
+ * Turn an invite value into a room id. Accepts a full room id, a legacy `name~hostkey`, or a plain
+ * room name (the normal invite link), which is looked up in the live room list.
+ */
+async function toRoomId(v: string): Promise<string | null> {
   v = v.trim();
   if (/^public:(NA|SA|EU|AF|AS|OC):\d{1,2}$/.test(v) || parseRoom(v)) return v;
   const m = /^([a-z0-9_-]{1,32})~([0-9a-f]{16})$/.exec(v.toLowerCase());
   if (m) return `room:${m[1]}~${m[2]}`;
-  return 'room:' + v.toLowerCase().replace(/[^a-z0-9-_]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
+  const name = slugName(v.replace(/^room:/, ''));
+  if (!name) return null;
+  return lobby.resolve(name, (s) => ui.status(`Looking for room "${name}"… ${s}s`));
 }
-const inviteFor = (id: string, pass: string) => `${siteUrl()}?room=${encodeURIComponent(id.replace(/^room:/, ''))}${pass ? '#k=' + encodeURIComponent(pass) : ''}`;
+/** Invite links carry just the room name; names are unique across live rooms. */
+const inviteFor = (id: string, pass: string) => `${siteUrl()}?room=${encodeURIComponent(parseRoom(id)?.name ?? id.replace(/^room:/, ''))}${pass ? '#k=' + encodeURIComponent(pass) : ''}`;
 
 const ui = new UI(game, {
   solo: async (mode, level) => {
@@ -91,6 +97,11 @@ const ui = new UI(game, {
   createRoom: async (name, pass, mode, level) => {
     if (busy) return;
     busy = true;
+    if (await lobby.taken(name, nostr.pubkey, (s) => ui.status(`Checking "${name}" is free… ${s}s`))) {
+      ui.status(`"${name}" is already taken by another room. Pick a different name.`);
+      busy = false;
+      return;
+    }
     const net = ensureNet();
     ui.status('Opening your room…');
     const id = roomIdFor(name, nostr.pubkey);
@@ -106,8 +117,13 @@ const ui = new UI(game, {
   joinRoom: async (value, pass) => {
     if (busy) return;
     busy = true;
+    const id = await toRoomId(value);
+    if (!id) {
+      ui.status(`No open room called "${slugName(value)}". Check the name, or the host may have closed it.`);
+      busy = false;
+      return;
+    }
     const net = ensureNet();
-    const id = toRoomId(value);
     ui.status('Connecting…');
     net.mode = 'escape';
     net.startLevel = 0;

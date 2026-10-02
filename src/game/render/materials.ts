@@ -169,7 +169,14 @@ ${hasMat ? 'attribute vec4 aMat; varying vec4 vMat;' : ''}`,
       .replace('#include <normal_fragment_maps>', S('normal_fragment_maps', /texture2D\( normalMap, vNormalMapUv \)/g, 'textureGrad( normalMap, tUv, tDx, tDy )'))
       .replace('#include <roughnessmap_fragment>', S('roughnessmap_fragment', /texture2D\( roughnessMap, vRoughnessMapUv \)/g, 'textureGrad( roughnessMap, tUv, tDx, tDy )'))
       .replace('#include <metalnessmap_fragment>', S('metalnessmap_fragment', /texture2D\( metalnessMap, vMetalnessMapUv \)/g, 'textureGrad( metalnessMap, tUv, tDx, tDy )'))
-      .replace('#include <aomap_fragment>', S('aomap_fragment', /texture2D\( aoMap, vAoMapUv \)/g, 'textureGrad( aoMap, tUv, tDx, tDy )'));
+      .replace(
+        '#include <aomap_fragment>',
+        S('aomap_fragment', /texture2D\( aoMap, vAoMapUv \)/g, 'textureGrad( aoMap, tUv, tDx, tDy )') +
+          // the ORM's occlusion holds the surface's fine cavities (ceiling-tile fissures, carpet pile).
+          // three only darkens ambient light with it, so under a lone flashlight in a blackout surfaces
+          // went flat and textureless; let it shade direct light too.
+          `\n#ifdef USE_AOMAP\n  reflectedLight.directDiffuse *= ambientOcclusion;\n  reflectedLight.directSpecular *= mix(1.0, ambientOcclusion, 0.6);\n#endif`,
+      );
 
     // --- albedo grime / variation
     fs = fs.replace(

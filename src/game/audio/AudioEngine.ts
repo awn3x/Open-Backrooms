@@ -5,6 +5,10 @@ import * as THREE from 'three';
 import { assetUrl, audioExt, loadAudioManifest, type AudioManifest } from '../assets';
 import { settings } from '../core/Settings';
 
+/** Footstep takes differ in loudness (EBU R128 momentary max: carpet/concrete ≈ -29, water ≈ -23,
+ * metal ≈ -20 LUFS). Trim so metal grating reads a little louder than carpet, not 10 dB louder. */
+export const STEP_TRIM: Record<string, number> = { step_metal: 0.45, step_water: 0.62 };
+
 export interface PlayOpts {
   pos?: THREE.Vector3 | { x: number; y: number; z: number };
   gain?: number;
@@ -140,6 +144,13 @@ export class AudioEngine {
       this.loading.set(file, p);
     }
     return p;
+  }
+
+  /** Register a buffer made in code under `name` (and as its only variant). */
+  setBuffer(name: string, buf: AudioBuffer | AudioBuffer[]) {
+    const bufs = Array.isArray(buf) ? buf : [buf];
+    this.manifest[name] = bufs.map((_, i) => `${name}#${i}`);
+    bufs.forEach((b, i) => this.buffers.set(`${name}#${i}`, b));
   }
 
   async preload(names: string[]) {

@@ -16,6 +16,7 @@ import { findPath } from './Pathfinding';
 import { inHub } from '../world/layout';
 import type { Target } from './EntityManager';
 import { profile, saveProfile } from '../core/Settings';
+import { STEP_TRIM } from '../audio/AudioEngine';
 
 const BOT_NAMES = ['Marisol', 'Dex', 'Okonkwo', 'Juniper', 'Tomasz', 'Priya', 'Hollis'];
 const DIRS: [number, number][] = [
@@ -42,8 +43,13 @@ class Bot {
   carry = 0; // almond water bottles
   stuckT = 0;
   pathKey = '';
-  bestD = Infinity;
+  /** absolute trail index this bot has reached (see Bots.trailBase) */
+  trailAt = -1;
+  /** where the bot was at the start of the current stuck-check window */
+  checkPos = new THREE.Vector3();
   progT = 0;
+  sideT = 0;
+  sideDir = 1;
   stepPhase = 0;
   idleLookT = 0;
   scoutGoal: { x: number; z: number } | null = null;
@@ -61,6 +67,8 @@ export class Bots {
   enabled = false;
   def: LevelDef | null = null;
   private trail: THREE.Vector3[] = [];
+  /** absolute index of trail[0]; grows as old breadcrumbs are dropped */
+  private trailBase = 0;
   private stillT = 0;
   private exitKnown = false;
   private pingedItems = new Set<string>();
@@ -88,12 +96,15 @@ export class Bots {
     this.def = def;
     const p = this.game.player.pos;
     this.trail = [p.clone()];
+    this.trailBase = 0;
     this.exitKnown = false;
     this.pingedItems.clear();
     this.list.forEach((b, i) => {
       b.pos.set(p.x + Math.cos(i * 2) * 1.2, 0, p.z + Math.sin(i * 2) * 1.2);
       b.vel.set(0, 0);
       b.path = [];
+      b.trailAt = -1;
+      b.checkPos.copy(b.pos);
       b.alive = true;
       b.mode = 'follow';
       b.avatar.root.visible = true;
@@ -120,6 +131,50 @@ export class Bots {
       acc += seg;
     }
     return t[0].clone();
+  }
+
+  /** absolute trail index `dist` metres back from the player */
+  private trailIndexBack(dist: number): number {
+    const t = this.trail;
+    let acc = 0;
+    for (let i = t.length - 1; i > 0; i--) {
+      acc += t[i].distanceTo(t[i - 1]);
+      if (acc >= dist) return this.trailBase + i - 1;
+    }
+    return this.trailBase;
+  }
+
+  /**
+   * Pure pursuit along the player's breadcrumbs: aim at the farthest crumb (up to this bot's slot
+   * in the line) that is in clear view. Null if the bot has lost the trail (then A* takes over).
+   */
+  private followTrail(b: Bot, back: number): THREE.Vector3 | null {
+    const t = this.trail;
+    if (t.length < 2) return null;
+    const goalAbs = this.trailIndexBack(back);
+    const from = Math.max(this.trailBase, b.trailAt < 0 ? goalAbs - 40 : b.trailAt - 2);
+    for (let a = goalAbs; a >= from; a--) {
+      const q = t[a - this.trailBase];
+      if (q && this.clear(b.pos.x, b.pos.z, q.x, q.z, 0.3)) {
+        if (b.trailAt < 0 || a > b.trailAt) b.trailAt = a;
+        return q;
+      }
+    }
+    return null;
+  }
+
+  /** how far the bot is behind its place in line, measured along the trail when it's on it */
+  private trailGap(b: Bot, back: number, goal: THREE.Vector3): number {
+    const goalAbs = this.trailIndexBack(back);
+    if (b.trailAt < this.trailBase) return Math.hypot(goal.x - b.pos.x, goal.z - b.pos.z);
+    let d = 0;
+    const t = this.trail;
+    const s0 = b.trailAt - this.trailBase;
+    const s1 = goalAbs - this.trailBase;
+    if (s0 >= s1) return Math.hypot(goal.x - b.pos.x, goal.z - b.pos.z);
+    d += Math.hypot(t[s0].x - b.pos.x, t[s0].z - b.pos.z);
+    for (let i = s0; i < s1; i++) d += t[i].distanceTo(t[i + 1]);
+    return d;
   }
 
   /** breadth-first over open cells: pick the best-scoring cell within `depth` steps */
@@ -185,9 +240,12 @@ export class Bots {
     const cell = def.cell;
     // breadcrumb trail of where the player has actually walked
     const last = this.trail[this.trail.length - 1];
-    if (!last || last.distanceTo(me) > 0.8) {
+    if (!last || last.distanceTo(me) > 0.6) {
       this.trail.push(me.clone());
-      if (this.trail.length > 60) this.trail.shift();
+      if (this.trail.length > 160) {
+        this.trail.shift();
+        this.trailBase++;
+      }
     }
     this.stillT = g.player.speed < 0.3 ? this.stillT + dt : 0;
     const exitIt = g.objects?.interactables.find((i) => i.kind === 'exit');
@@ -197,6 +255,7 @@ export class Bots {
         b.respawn -= dt;
         if (b.respawn <= 0 && !this.visibleToPlayer(this.trailPoint(6))) {
           b.alive = true;
+          b.trailAt = -1;
           b.pos.copy(this.trailPoint(6));
           b.avatar.root.visible = true;
         }
@@ -265,12 +324,16 @@ export class Bots {
       let goal = this.trailPoint(2.2 + b.slot * 1.4);
       let speed = 0;
       const pace = Math.max(1.6, p.speed);
+      // when following, walk the player's own breadcrumbs (always walkable) instead of re-planning
+      let trailTarget: THREE.Vector3 | null = null;
       let crouch = p.crouching && dMe < 12;
       let look: number | null = null;
       switch (b.mode) {
         case 'follow': {
-          const behind = Math.hypot(goal.x - b.pos.x, goal.z - b.pos.z);
-          speed = behind < 0.4 ? 0 : Math.min(5.2, pace + Math.max(0, behind - 1) * 1.2);
+          trailTarget = this.followTrail(b, 2.2 + b.slot * 1.4);
+          const behind = this.trailGap(b, 2.2 + b.slot * 1.4, goal);
+          // keep pace, and run faster than a sprinting player to close a gap (players top out at 5.4)
+          speed = behind < 0.4 ? 0 : Math.min(6.2, pace + Math.max(0, behind - 0.8) * 1.4);
           break;
         }
         case 'give':
@@ -301,8 +364,9 @@ export class Bots {
         }
         case 'idle': {
           goal = this.trailPoint(2.2 + b.slot * 1.4);
-          const behind = Math.hypot(goal.x - b.pos.x, goal.z - b.pos.z);
-          speed = behind > 1.2 ? 1.4 : 0;
+          trailTarget = this.followTrail(b, 2.2 + b.slot * 1.4);
+          const behind = this.trailGap(b, 2.2 + b.slot * 1.4, goal);
+          speed = behind > 1.2 ? Math.min(4, 1.4 + behind * 0.5) : 0;
           b.idleLookT -= dt;
           if (b.idleLookT <= 0) {
             b.idleLookT = 1.5 + Math.random() * 2.5;
@@ -357,7 +421,7 @@ export class Bots {
       // collider.los only knows walls, not corner pillars: shortcut only along straight runs of cells
       const sameCell = gcell[0] === bcell[0] && gcell[1] === bcell[1];
       const inLine = gcell[0] === bcell[0] || gcell[1] === bcell[1];
-      const direct = sameCell || (inLine && Math.hypot(goal.x - b.pos.x, goal.z - b.pos.z) < cell * 3 && this.clear(b.pos.x, b.pos.z, goal.x, goal.z));
+      const direct = !!trailTarget || sameCell || (inLine && Math.hypot(goal.x - b.pos.x, goal.z - b.pos.z) < cell * 3 && this.clear(b.pos.x, b.pos.z, goal.x, goal.z));
       // keep a path until the goal cell changes (re-planning every tick flips between equal routes)
       if (speed > 0 && !direct && (key !== b.pathKey || !b.path.length || b.repath <= 0)) {
         b.repath = 3;
@@ -365,8 +429,8 @@ export class Bots {
         const pth = gcell[0] === bcell[0] && gcell[1] === bcell[1] ? null : findPath(g.world!.cache, bcell[0], bcell[1], gcell[0], gcell[1], undefined, 900);
         b.path = pth ? pth.slice(1) : [];
       }
-      let tx = goal.x;
-      let tz = goal.z;
+      let tx = trailTarget ? trailTarget.x : goal.x;
+      let tz = trailTarget ? trailTarget.z : goal.z;
       if (!direct && b.path.length) {
         // drop waypoints we've reached, then string-pull through the next few that are in clear view
         while (b.path.length > 1 && Math.hypot((b.path[0][0] + 0.5) * cell - b.pos.x, (b.path[0][1] + 0.5) * cell - b.pos.z) < cell * 0.45) b.path.shift();
@@ -397,32 +461,44 @@ export class Bots {
       push(me.x, me.z, 1.3);
       for (const o of this.list) if (o !== b && o.alive) push(o.pos.x, o.pos.z, 1.2);
       want.add(sep);
+      if (b.sideT > 0) {
+        // unsticking: slide along whatever is in the way rather than pushing straight into it
+        b.sideT -= dt;
+        const l = want.length() || speed;
+        want.set(-want.y, want.x).setLength(l * b.sideDir).add(want.clone().multiplyScalar(0.3));
+      }
       const accel = speed > 0 ? 10 : 14;
       const dv = want.clone().sub(b.vel);
       const maxDv = accel * dt;
       if (dv.length() > maxDv) dv.setLength(maxDv);
       b.vel.add(dv);
-      if (b.vel.length() > 5.4) b.vel.setLength(5.4);
+      if (b.vel.length() > 6.2) b.vel.setLength(6.2);
       const r = g.collider.resolve(b.pos.x + b.vel.x * dt, b.pos.z + b.vel.y * dt, 0.28);
       const moved = Math.hypot(r.x - b.pos.x, r.z - b.pos.z);
       b.pos.x = r.x;
       b.pos.z = r.z;
       const actual = moved / Math.max(dt, 1e-4);
 
-      // --- watchdog: no progress toward the goal -> re-plan and sidestep; long stuck -> catch up out of sight
-      const gd = Math.hypot(goal.x - b.pos.x, goal.z - b.pos.z);
+      // --- watchdog: stuck means "trying to move but not actually going anywhere" (the goal itself
+      // moves with the player, so distance-to-goal can't tell). Re-plan and slide sideways; if that
+      // keeps failing, catch up out of sight.
       b.progT += dt;
-      if (gd < b.bestD - 0.5 || speed === 0 || gd < 1) {
-        b.bestD = gd;
+      if (speed < 0.5 || dist < 0.6) {
         b.progT = 0;
-        b.stuckT = 0;
-      } else if (b.progT > 2.5) {
-        b.stuckT += b.progT;
+        b.stuckT = Math.max(0, b.stuckT - dt);
+        b.checkPos.copy(b.pos);
+      } else if (b.progT > 1.2) {
+        const went = Math.hypot(b.pos.x - b.checkPos.x, b.pos.z - b.checkPos.z);
+        if (went < Math.min(1.0, speed * 1.2 * 0.35)) {
+          b.stuckT += b.progT;
+          b.path = [];
+          b.pathKey = '';
+          b.trailAt = -1;
+          b.sideT = 0.6;
+          b.sideDir = -b.sideDir;
+        } else b.stuckT = Math.max(0, b.stuckT - b.progT);
         b.progT = 0;
-        b.bestD = gd;
-        b.path = [];
-        b.pathKey = '';
-        b.vel.set(Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(3);
+        b.checkPos.copy(b.pos);
       }
       const far = dMe > 40 || b.stuckT > 5;
       if (far && !this.visibleToPlayer(b.pos)) {
@@ -431,12 +507,15 @@ export class Bots {
           b.pos.copy(back);
           b.vel.set(0, 0);
           b.path = [];
+          b.trailAt = -1;
           b.stuckT = 0;
+          b.checkPos.copy(b.pos);
         }
       }
 
       // --- presentation
-      if (look === null && actual > 0.2) look = Math.atan2(b.vel.x, b.vel.y);
+      // face where we're heading, but ignore the little shoves from separation so bodies don't twitch
+      if (look === null && actual > 0.6 && b.vel.length() > 0.6) look = Math.atan2(b.vel.x, b.vel.y);
       if (look === null && dMe < 4 && b.mode === 'follow') look = Math.atan2(me.x - b.pos.x, me.z - b.pos.z);
       if (look !== null) b.yaw = look;
       b.flash = b.mode === 'watch' || (b.mode !== 'avoid' && g.world!.sampleE(b.pos.x, b.pos.z) < 0.12);
@@ -450,7 +529,8 @@ export class Bots {
         b.stepPhase += (actual * dt) / (actual > 3.6 ? 1.35 : crouch ? 0.7 : 0.9);
         if (b.stepPhase >= 1) {
           b.stepPhase = 0;
-          g.audio.play(g.surfaceAt(b.pos.x, b.pos.z), { pos: { x: b.pos.x, y: 0.1, z: b.pos.z }, gain: crouch ? 0.15 : actual > 3.6 ? 0.75 : 0.4, occlude: true, reverb: 0.3, hrtf: false, rate: 0.95 + Math.random() * 0.1 });
+          const surf = g.surfaceAt(b.pos.x, b.pos.z);
+          g.audio.play(surf, { pos: { x: b.pos.x, y: 0.1, z: b.pos.z }, gain: (crouch ? 0.15 : actual > 3.6 ? 0.75 : 0.4) * (STEP_TRIM[surf] ?? 1), occlude: true, reverb: 0.3, hrtf: false, rate: 0.95 + Math.random() * 0.1 });
         }
       }
     }

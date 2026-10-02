@@ -741,7 +741,7 @@ def pipe_bracket():
 
 ALL = [outlet_duplex, outlet_twoprong, outlet_gfci, outlet_broken, switch_plate, floor_box, troffer, troffer_hanging,
        vent_ceiling, vent_wall, almond_water, exit_door, hatch, elevator, office_chair, wet_floor_sign, crate, pallet,
-       lamp_highbay, lamp_caged, pipe_valve, pipe_gauge, pipe_bracket]
+       lamp_highbay, lamp_caged, pipe_valve, pipe_gauge]
 
 
 # ------------------------------------------------------------------ hub base
